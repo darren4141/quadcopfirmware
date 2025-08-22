@@ -5,11 +5,18 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "driver/ledc.h"
 #include "driver/i2c.h"
 #include "mpu6050.c"
+#include "pwm.c"
 
+#define D0_PIN 0
+#define D2_PIN 2
+#define D3_PIN 21
+#define D8_PIN 19
 
 void app_main(void) {
+
     // I2C master init
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
@@ -46,6 +53,8 @@ void app_main(void) {
     ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf2));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf2.mode, 0, 0, 0));
 
+    xTaskCreate(pwm_cycle_task, "pwm_cycle_task", 4096, NULL, 5, NULL);
+
     // Start DMP reader
-    xTaskCreate(dmp_task_polling, "dmp_poll", 4096, NULL, 5, NULL);
+    // xTaskCreate(dmp_task_polling, "dmp_poll", 4096, NULL, 5, NULL);
 }
