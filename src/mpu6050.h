@@ -52,8 +52,6 @@
 
 #include "dmp_firmware.h"
 
-static const char *TAG = "MPU6050_DMP";
-
 static uint8_t mpu_addr = 0;
 
 static esp_err_t i2c_write_reg(uint8_t addr, uint8_t reg, uint8_t val);

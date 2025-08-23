@@ -8,6 +8,8 @@
 #include "driver/i2c.h"
 #include "mpu6050.h"
 
+static const char *TAGMPU = "MPU6050_DMP";
+
 //MPU6050 I2C helpers
 static esp_err_t i2c_write_reg(uint8_t addr, uint8_t reg, uint8_t val){
     uint8_t buf[2] = {reg, val};
@@ -106,7 +108,7 @@ static esp_err_t mpu_write_memory_block(const uint8_t *data, uint16_t len, uint8
         // Write one byte
         esp_err_t err = mpu_mem_write_byte(data[i]);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "MEM write timeout @ i=%u bank=%u addr=%u (val=0x%02X)", i, curBank, curAddr, data[i]);
+            ESP_LOGE(TAGMPU, "MEM write timeout @ i=%u bank=%u addr=%u (val=0x%02X)", i, curBank, curAddr, data[i]);
             return err;
         }
 
@@ -116,14 +118,14 @@ static esp_err_t mpu_write_memory_block(const uint8_t *data, uint16_t len, uint8
         ESP_ERROR_CHECK(mpu_set_memory_start_address(curAddr));
         err = mpu_mem_read_byte(&rd);
         if (err != ESP_OK || rd != data[i]) {
-            ESP_LOGE(TAG, "Verify fail @ i=%u bank=%u addr=%u wrote=0x%02X read=0x%02X err=%s",
+            ESP_LOGE(TAGMPU, "Verify fail @ i=%u bank=%u addr=%u wrote=0x%02X read=0x%02X err=%s",
                      i, curBank, curAddr, data[i], rd, esp_err_to_name(err));
             return (err != ESP_OK) ? err : ESP_FAIL;
         }
 
         // Progress log every 16 bytes
         if ((i & 0x0F) == 0) {
-            ESP_LOGI(TAG, "DMP upload %4u / %u (bank=%u addr=%u)", i, len, curBank, curAddr);
+            ESP_LOGI(TAGMPU, "DMP upload %4u / %u (bank=%u addr=%u)", i, len, curBank, curAddr);
         }
 
         // Advance
@@ -136,7 +138,7 @@ static esp_err_t mpu_write_memory_block(const uint8_t *data, uint16_t len, uint8
         // Tiny breather helps some clones
         vTaskDelay(pdMS_TO_TICKS(1));
     }
-    ESP_LOGI(TAG, "DMP upload done (%u bytes).", len);
+    ESP_LOGI(TAGMPU, "DMP upload done (%u bytes).", len);
     return ESP_OK;
 }
 
@@ -149,14 +151,14 @@ static esp_err_t mpu_write_dmp_config_set(const uint8_t *cfg, uint16_t cfgSize) 
 
         if (length > 0) {
             if (i + length > cfgSize) return ESP_ERR_INVALID_SIZE;
-            ESP_LOGI(TAG, "DMP cfg bank=%u offset=%u len=%u", bank, offset, length);
+            ESP_LOGI(TAGMPU, "DMP cfg bank=%u offset=%u len=%u", bank, offset, length);
             ESP_ERROR_CHECK(mpu_write_memory_block(&cfg[i], length, bank, offset));
             i += length;
         } else {
             // SPECIAL INSTRUCTION: next byte is a command
             if (i >= cfgSize) return ESP_ERR_INVALID_SIZE;
             uint8_t special = cfg[i++];
-            ESP_LOGI(TAG, "DMP special=0x%02X", special);
+            ESP_LOGI(TAGMPU, "DMP special=0x%02X", special);
             switch (special) {
                 case 0x01: {
                     // Enable DMP-related interrupts (same as MotionApps v2.0)
@@ -165,7 +167,7 @@ static esp_err_t mpu_write_dmp_config_set(const uint8_t *cfg, uint16_t cfgSize) 
                     break;
                 }
                 default:
-                    ESP_LOGW(TAG, "Unknown DMP special 0x%02X (skipping)", special);
+                    ESP_LOGW(TAGMPU, "Unknown DMP special 0x%02X (skipping)", special);
                     break;
             }
         }
@@ -181,16 +183,16 @@ static esp_err_t mpu_dmp_initialize(void) {
     vTaskDelay(pdMS_TO_TICKS(10));
 
     // Upload DMP firmware
-    ESP_LOGI(TAG, "Uploading DMP (%u bytes)", (unsigned)dmpMemoryLength);
+    ESP_LOGI(TAGMPU, "Uploading DMP (%u bytes)", (unsigned)dmpMemoryLength);
     ESP_ERROR_CHECK(mpu_write_memory_block(dmpMemory, dmpMemoryLength, 0x00, 0x00));
 
     // Apply DMP config
-    ESP_LOGI(TAG, "Applying DMP config (%u bytes)", (unsigned)dmpConfigLength);
+    ESP_LOGI(TAGMPU, "Applying DMP config (%u bytes)", (unsigned)dmpConfigLength);
     ESP_ERROR_CHECK(mpu_write_dmp_config_set(dmpConfig, dmpConfigLength));
 
     // Apply DMP updates (if present)
     if (dmpUpdatesLength) {
-        ESP_LOGI(TAG, "Applying DMP updates (%u bytes)", (unsigned)dmpUpdatesLength);
+        ESP_LOGI(TAGMPU, "Applying DMP updates (%u bytes)", (unsigned)dmpUpdatesLength);
         ESP_ERROR_CHECK(mpu_write_dmp_config_set(dmpUpdates, dmpUpdatesLength));
     }
 
