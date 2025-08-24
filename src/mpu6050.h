@@ -1,3 +1,8 @@
+#pragma once
+#include "esp_err.h"
+#include "driver/i2c.h"
+#include "dmp_firmware.h"
+
 //I2C config
 #define I2C_SDA_PIN         22
 #define I2C_SCL_PIN         23
@@ -50,41 +55,20 @@
 #define MAX_BATCH_PACKETS  8         // how many packets per burst read
 #define POLL_MS            3         // for ~100 Hz DMP, poll every ~3–5 ms
 
-#include "dmp_firmware.h"
+#define MPU_REG_ACCEL_XOUT_H     0x3B
 
-static uint8_t mpu_addr = 0;
+extern uint8_t mpu_addr;
 
-static esp_err_t i2c_write_reg(uint8_t addr, uint8_t reg, uint8_t val);
+esp_err_t mpu_detect(void);
 
-static esp_err_t i2c_read_reg(uint8_t addr, uint8_t reg, uint8_t *val);
+esp_err_t mpu_basic_init(void);
 
-static esp_err_t i2c_write_bytes(uint8_t addr, uint8_t reg, const uint8_t * data, size_t len);
+esp_err_t mpu_dmp_initialize(void);
 
-static esp_err_t mpu_detect(void);
+void dmp_task_polling(void *arg);
 
-static esp_err_t mpu_basic_init(void);
+void ypr_task_polling(void *arg);
 
-static esp_err_t mpu_set_memory_bank(uint8_t bank);
+esp_err_t mpu_dmp_init(void);
 
-static esp_err_t mpu_set_memory_start_address(uint8_t addr);
-
-static esp_err_t mpu_mem_write_byte(uint8_t val);
-
-static esp_err_t mpu_mem_read_byte(uint8_t *val);
-
-static esp_err_t mpu_write_memory_block(const uint8_t *data, uint16_t len, uint8_t bank, uint8_t addr);
-
-static esp_err_t mpu_write_dmp_config_set(const uint8_t *cfg, uint16_t cfgSize);
-
-static esp_err_t mpu_dmp_initialize(void);
-
-static uint16_t mpu_fifo_count(void);
-
-static esp_err_t mpu_fifo_read(uint8_t *dst, size_t n);
-
-static inline int32_t be32(const uint8_t *p);
-
-static void quat_to_ypr(float qw, float qx, float qy, float qz, float *yaw, float *pitch, float *roll);
-
-static void dmp_task_polling(void *arg);
-
+esp_err_t mpu_init(uint32_t bus_hz);

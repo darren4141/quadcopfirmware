@@ -3,6 +3,11 @@
         "cstdint": "c",
         "task.h": "c",
         "freertos.h": "c",
-        "ledc.h": "c"
+        "ledc.h": "c",
+        "semphr.h": "c",
+        "nvs_flash.h": "c",
+        "stdio.h": "c",
+        "stdlib.h": "c",
+        "i2c.h": "c"
     }
 }

@@ -1,7 +1,9 @@
+#include "server.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "driver/gpio.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -10,127 +12,174 @@
 #include "nvs_flash.h"
 #include "esp_http_server.h"
 
-#define TAG "APP"
-#define LED_GPIO 15  // onboard LED (active-LOW)
 
-// ---------------- HTTP + WS ----------------
-static httpd_handle_t s_server = NULL;
-static volatile uint8_t s_wasd = 0, s_ijkl = 0, s_tfgh = 0; // last packets from client
+// ----------- YPR ring buffer + offsets -----------
+static float ring[RING_N][3];    // [i][0]=yaw, [1]=pitch, [2]=roll
+static int   ring_head = 0;
+static int   ring_count = 0;
+static float off[3] = {0,0,0};   // zero offsets: yaw,pitch,roll
+static SemaphoreHandle_t ypr_mtx;
 
-static esp_err_t root_get_handler(httpd_req_t *req) {
-    // Tiny page with keyboard handling and WS client
+// Call this from your DMP polling task when you have a new YPR (radians or degrees—your choice)
+void imu_push_ypr(const float ypr[3]) {
+    if (!ypr_mtx) return;
+    xSemaphoreTake(ypr_mtx, portMAX_DELAY);
+    ring[ring_head][0] = ypr[0];
+    ring[ring_head][1] = ypr[1];
+    ring[ring_head][2] = ypr[2];
+    ring_head = (ring_head + 1) % RING_N;
+    if (ring_count < RING_N) ring_count++;
+    xSemaphoreGive(ypr_mtx);
+}
+
+// Average last N samples (clamped to available)
+static int avg_last(int N, float out[3]) {
+    if (!ypr_mtx) return 0;
+    xSemaphoreTake(ypr_mtx, portMAX_DELAY);
+    if (ring_count == 0) { xSemaphoreGive(ypr_mtx); return 0; }
+    if (N > ring_count) N = ring_count;
+
+    double s0=0, s1=0, s2=0;
+    int idx = (ring_head - 1 + RING_N) % RING_N;
+    for (int i=0; i<N; i++) {
+        s0 += ring[idx][0];
+        s1 += ring[idx][1];
+        s2 += ring[idx][2];
+        idx = (idx - 1 + RING_N) % RING_N;
+    }
+    out[0] = (float)(s0 / N);
+    out[1] = (float)(s1 / N);
+    out[2] = (float)(s2 / N);
+    xSemaphoreGive(ypr_mtx);
+    return N;
+}
+
+// Set zero offsets = avg of last 20 (or fewer if not enough yet)
+static void do_zero(void) {
+    float m[3];
+    int used = avg_last(RING_N, m);
+    if (used) {
+        off[0]=m[0]; off[1]=m[1]; off[2]=m[2];
+        ESP_LOGI(TAG, "Zeroed YPR using last %d samples: off=[%.3f, %.3f, %.3f]", used, off[0], off[1], off[2]);
+    } else {
+        ESP_LOGW(TAG, "Zero failed: no samples yet");
+    }
+}
+
+// Read most recent sample (minus offsets). Returns 1 if ok.
+static int latest_zeroed(float z[3]) {
+    if (!ypr_mtx) return 0;
+    xSemaphoreTake(ypr_mtx, portMAX_DELAY);
+    if (ring_count == 0) { xSemaphoreGive(ypr_mtx); return 0; }
+    int idx = (ring_head - 1 + RING_N) % RING_N;
+    z[0] = ring[idx][0] - off[0];
+    z[1] = ring[idx][1] - off[1];
+    z[2] = ring[idx][2] - off[2];
+    xSemaphoreGive(ypr_mtx);
+    return 1;
+}
+
+// ---------------- HTTP handlers ----------------
+static esp_err_t root_get(httpd_req_t *req) {
+    // Minimal page: shows YPR and listens for keys; T triggers zero.
     const char *html =
-        "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
-        "<title>ESP32-C6 Keyboard</title>"
-        "<style>body{font-family:system-ui;margin:16px}code{background:#eee;padding:2px 6px;border-radius:4px}</style>"
+        "<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>ESP32-C6 YPR</title>"
+        "<style>body{font-family:system-ui;margin:16px}.v{font-family:monospace}</style>"
         "</head><body>"
-        "<h2>Keyboard → 3×4-bit packet</h2>"
-        "<p>Press keys: <b>WASD</b>, <b>IJKL</b>, <b>TFGH</b>. Packets go to ESP via WebSocket.</p>"
-        "<p>Packet format: <code>P:&lt;W&gt;&lt;I&gt;&lt;T&gt;</code> (each is a hex nibble).</p>"
-        "<div id='state'></div>"
-        "<script>\n"
-        "let ws; let wasd=0, ijkl=0, tfgh=0; let dirty=false;\n"
-        "const keyBit = {\n"
-        "  'w':['wasd',0],'a':['wasd',1],'s':['wasd',2],'d':['wasd',3],\n"
-        "  'i':['ijkl',0],'j':['ijkl',1],'k':['ijkl',2],'l':['ijkl',3],\n"
-        "  't':['tfgh',0],'f':['tfgh',1],'g':['tfgh',2],'h':['tfgh',3]\n"
-        "};\n"
-        "function nibbleToHex(n){return n.toString(16).toUpperCase();}\n"
-        "function sendPacket(){ if(!ws || ws.readyState!==1) return; const pkt=`P:${nibbleToHex(wasd)}${nibbleToHex(ijkl)}${nibbleToHex(tfgh)}`; ws.send(pkt); }\n"
-        "function updateState(){document.getElementById('state').innerHTML=\n"
-        "  `WASD: 0x${nibbleToHex(wasd)} &nbsp; IJKL: 0x${nibbleToHex(ijkl)} &nbsp; TFGH: 0x${nibbleToHex(tfgh)}`;}\n"
-        "function setBit(setName, bit, on){\n"
-        "  let v = (setName==='wasd')?wasd:(setName==='ijkl')?ijkl:tfgh;\n"
-        "  v = on ? (v | (1<<bit)) : (v & ~(1<<bit));\n"
-        "  if(setName==='wasd') wasd=v; else if(setName==='ijkl') ijkl=v; else tfgh=v;\n"
-        "  dirty=true; updateState();\n"
-        "}\n"
-        "window.addEventListener('keydown', e=>{const k=e.key.toLowerCase(); if(keyBit[k]){setBit(keyBit[k][0], keyBit[k][1], true);}});\n"
-        "window.addEventListener('keyup',   e=>{const k=e.key.toLowerCase(); if(keyBit[k]){setBit(keyBit[k][0], keyBit[k][1], false);}});\n"
-        "function connect(){\n"
-        "  const proto = location.protocol==='https:'?'wss':'ws';\n"
-        "  ws = new WebSocket(`${proto}://${location.host}/ws`);\n"
-        "  ws.onopen  = ()=>{console.log('WS open'); updateState();};\n"
-        "  ws.onclose = ()=>{console.log('WS closed'); setTimeout(connect, 1000);};\n"
-        "  ws.onmessage = (ev)=>{console.log('WS <-', ev.data);} // debug echo\n"
-        "}\n"
-        "connect();\n"
-        "// Send on change, throttled ~60Hz\n"
-        "setInterval(()=>{ if(dirty){ dirty=false; sendPacket(); } }, 16);\n"
-        "</script>"
-        "</body></html>";
-
+        "<h2>Yaw/Pitch/Roll + Keys</h2>"
+        "<p>Press <b>WASD</b>, <b>IJKL</b>, <b>TFGH</b> to send packets. Press <b>T</b> to ZERO (avg last 20).</p>"
+        "<div class=v id=ypr>yaw=0 pitch=0 roll=0</div>"
+        "<div class=v id=state></div>"
+        "<script>"
+        "let ws; let wasd=0, ijkl=0, tfgh=0; let sentZero=false;"
+        "const keyBit={'w':['wasd',0],'a':['wasd',1],'s':['wasd',2],'d':['wasd',3],"
+                      "'i':['ijkl',0],'j':['ijkl',1],'k':['ijkl',2],'l':['ijkl',3],"
+                      "'t':['tfgh',0],'f':['tfgh',1],'g':['tfgh',2],'h':['tfgh',3]};"
+        "function hx(n){return n.toString(16).toUpperCase();}"
+        "function pkt(){return `P:${hx(wasd)}${hx(ijkl)}${hx(tfgh)}`;}"
+        "function send(){ if(ws&&ws.readyState===1) ws.send(pkt()); }"
+        "function zero(){ if(ws&&ws.readyState===1) ws.send('Z'); fetch('/zero',{method:'POST'}).catch(()=>{}); }"
+        "function up(){document.getElementById('state').textContent=`WASD=0x${hx(wasd)} IJKL=0x${hx(ijkl)} TFGH=0x${hx(tfgh)}`;}"
+        "addEventListener('keydown',e=>{const k=e.key.toLowerCase(); if(k==='t'&&!sentZero){sentZero=true;zero();}"
+        " if(keyBit[k]){let s=keyBit[k][0],b=keyBit[k][1]; if(s==='wasd')wasd|=(1<<b); else if(s==='ijkl')ijkl|=(1<<b); else tfgh|=(1<<b); send(); up(); }});"
+        "addEventListener('keyup',e=>{const k=e.key.toLowerCase(); if(k==='t')sentZero=false;"
+        " if(keyBit[k]){let s=keyBit[k][0],b=keyBit[k][1]; if(s==='wasd')wasd&=~(1<<b); else if(s==='ijkl')ijkl&=~(1<<b); else tfgh&=~(1<<b); send(); up(); }});"
+        "function connect(){const proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(`${proto}://${location.host}/ws`);ws.onclose=()=>setTimeout(connect,1000);} connect();"
+        "setInterval(()=>{"
+        "  fetch('/imu.json?ts='+Date.now(), {cache:'no-store'})"
+        "    .then(r=>r.json())"
+        "    .then(j=>{"
+        "      const el = document.getElementById('ypr');"
+        "      if (j && Number.isFinite(j.yaw) && Number.isFinite(j.pitch) && Number.isFinite(j.roll)) {"
+        "        el.textContent = `yaw=${j.yaw.toFixed(2)} pitch=${j.pitch.toFixed(2)} roll=${j.roll.toFixed(2)}`;"
+        "      } else {"
+        "        el.textContent = 'no data yet…';"
+        "      }"
+        "    })"
+        "    .catch(()=>{"
+        "      document.getElementById('ypr').textContent = 'fetch failed…';"
+        "    });"
+        "}, 100);"
+        "</script></body></html>";
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
 }
 
-// WebSocket endpoint
-static esp_err_t ws_handler(httpd_req_t *req) {
-    if (req->method == HTTP_GET) {
-        // Handshake complete
-        return ESP_OK;
-    }
-    httpd_ws_frame_t frame = {
-        .final = true,
-        .fragmented = false,
-        .type = HTTPD_WS_TYPE_TEXT,
-        .payload = NULL,
-        .len = 0
-    };
-    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
-    if (ret != ESP_OK) return ret;
+static esp_err_t imu_json(httpd_req_t *req) {
+    float z[3];
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
 
-    frame.payload = malloc(frame.len + 1);
-    if (!frame.payload) return ESP_ERR_NO_MEM;
-
-    ret = httpd_ws_recv_frame(req, &frame, frame.len);
-    if (ret == ESP_OK) {
-        frame.payload[frame.len] = 0;
-        // Expect "P:<W><I><T>", where each <…> is hex nibble
-        if (frame.len >= 5 && frame.payload[0]=='P' && frame.payload[1]==':') {
-            char w = frame.payload[2], i = frame.payload[3], t = frame.payload[4];
-            uint8_t wn = (uint8_t)strtoul((char[]){w,0}, NULL, 16) & 0xF;
-            uint8_t in = (uint8_t)strtoul((char[]){i,0}, NULL, 16) & 0xF;
-            uint8_t tn = (uint8_t)strtoul((char[]){t,0}, NULL, 16) & 0xF;
-            s_wasd = wn; s_ijkl = in; s_tfgh = tn;
-            ESP_LOGI(TAG, "WASD=0x%X IJKL=0x%X TFGH=0x%X", wn, in, tn);
-            // Example: drive onboard LED on any key pressed (active-LOW)
-            bool any = (wn|in|tn) != 0;
-            gpio_set_level(LED_GPIO, any ? 0 : 1);
-        }
-        // Echo ack back (optional)
-        const char *ok = "OK";
-        httpd_ws_frame_t rsp = {
-            .final = true, .fragmented = false, .type = HTTPD_WS_TYPE_TEXT,
-            .payload = (uint8_t*)ok, .len = strlen(ok)
-        };
-        httpd_ws_send_frame(req, &rsp);
-    }
-    free(frame.payload);
-    return ret;
-}
-
-static httpd_handle_t start_webserver(void) {
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    httpd_handle_t server = NULL;
-
-    if (httpd_start(&server, &config) == ESP_OK) {
-        // Page
-        httpd_uri_t root = { .uri="/", .method=HTTP_GET, .handler=root_get_handler, .user_ctx=NULL };
-        httpd_register_uri_handler(server, &root);
-        // WebSocket
-        httpd_uri_t ws = { .uri="/ws", .method=HTTP_GET, .handler=ws_handler, .user_ctx=NULL, .is_websocket=true };
-        httpd_register_uri_handler(server, &ws);
-
-        ESP_LOGI(TAG, "HTTP+WS server started");
+    if (latest_zeroed(z)) {
+        char buf[128];
+        int n = snprintf(buf, sizeof(buf),
+                         "{\"yaw\":%.4f,\"pitch\":%.4f,\"roll\":%.4f}", z[0], z[1], z[2]);
+        return httpd_resp_send(req, buf, n);
     } else {
-        ESP_LOGE(TAG, "HTTP server start failed");
+        return httpd_resp_sendstr(req, "{\"err\":\"no data\"}");
     }
-    return server;
 }
 
-// ---------------- Wi-Fi SoftAP ----------------
-static void wifi_init_softap(void) {
+static esp_err_t zero_post(httpd_req_t *req) {
+    do_zero();
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "ZEROED");
+}
+
+// ---------------- WebSocket: key packets + 'Z' zero ----------------
+static esp_err_t ws_handler(httpd_req_t *req) {
+    if (req->method == HTTP_GET) return ESP_OK; // handshake complete
+
+    httpd_ws_frame_t f = {0};
+    f.type = HTTPD_WS_TYPE_TEXT;
+    ESP_ERROR_CHECK(httpd_ws_recv_frame(req, &f, 0));
+    if (f.len == 0) return ESP_OK;
+
+    f.payload = malloc(f.len + 1);
+    if (!f.payload) return ESP_ERR_NO_MEM;
+    ESP_ERROR_CHECK(httpd_ws_recv_frame(req, &f, f.len));
+    f.payload[f.len] = 0;
+
+    if (f.len >= 5 && f.payload[0]=='P' && f.payload[1]==':') {
+        // key packet; demo: LED on if any nibble nonzero
+        bool any = 0;
+        for (int i=2; i<5; i++) {
+            int v = (int)strtol((char[]){(char)f.payload[i],0}, NULL, 16) & 0xF;
+            if (v) any = 1;
+        }
+        gpio_set_level(LED_GPIO, any ? 0 : 1); // active-LOW
+    } else if ((f.len==1 && f.payload[0]=='Z')) {
+        do_zero();
+    }
+
+    free(f.payload);
+    return ESP_OK;
+}
+
+// ---------------- Wi-Fi (AP) + server ----------------
+void wifi_ap_start(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
@@ -138,21 +187,93 @@ static void wifi_init_softap(void) {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    wifi_config_t ap_config = {
-        .ap = {
-            .ssid = "ESP32C6_AP",
-            .ssid_len = 0,
-            .channel = 1,
-            .password = "esp32c6pass",
-            .max_connection = 4,
-            .authmode = WIFI_AUTH_WPA_WPA2_PSK
-        }
-    };
-    if (strlen((char*)ap_config.ap.password) == 0) ap_config.ap.authmode = WIFI_AUTH_OPEN;
+    wifi_config_t ap = { .ap = {
+        .ssid = "ESP32C6_AP",
+        .password = "esp32c6pass",
+        .channel = 1,
+        .max_connection = 4,
+        .authmode = WIFI_AUTH_WPA_WPA2_PSK
+    }};
+    if (strlen((char*)ap.ap.password) == 0) ap.ap.authmode = WIFI_AUTH_OPEN;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     ESP_ERROR_CHECK(esp_wifi_start());
+}
 
-    ESP_LOGI(TAG, "SoftAP up: SSID:%s PASS:%s IP: 192.168.4.1", ap_config.ap.ssid, ap_config.ap.password);
+esp_err_t server_init(void) {
+    // --------- Initialize NVS ---------
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    // --------- LED setup (optional indicator) ---------
+    gpio_reset_pin(LED_GPIO);
+    gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(LED_GPIO, 1);   // active-LOW -> 1 = OFF
+
+    // --------- Create mutex for YPR ring buffer ---------
+    ypr_mtx = xSemaphoreCreateMutex();
+    if (!ypr_mtx) {
+        ESP_LOGE(TAG, "Failed to create ypr_mtx mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
+    // --------- Wi-Fi Access Point ---------
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_ap();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    wifi_config_t ap_cfg = { .ap = {
+        .ssid = "ESP32C6_AP",
+        .password = "esp32c6pass",
+        .channel = 1,
+        .max_connection = 4,
+        .authmode = WIFI_AUTH_WPA_WPA2_PSK
+    }};
+    if (strlen((char*)ap_cfg.ap.password) == 0) {
+        ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
+    }
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "Wi-Fi AP started, SSID:%s password:%s",
+             ap_cfg.ap.ssid, ap_cfg.ap.password);
+
+    // --------- HTTP server ---------
+    httpd_handle_t srv = NULL;
+    httpd_config_t http_cfg = HTTPD_DEFAULT_CONFIG();
+    ESP_ERROR_CHECK(httpd_start(&srv, &http_cfg));
+
+    // Register endpoints
+    httpd_uri_t root = { .uri="/", .method=HTTP_GET, .handler=root_get, .user_ctx=NULL };
+    httpd_register_uri_handler(srv, &root);
+
+    httpd_uri_t imu = { .uri="/imu.json", .method=HTTP_GET, .handler=imu_json, .user_ctx=NULL };
+    httpd_register_uri_handler(srv, &imu);
+
+    httpd_uri_t zero = { .uri="/zero", .method=HTTP_POST, .handler=zero_post, .user_ctx=NULL };
+    httpd_register_uri_handler(srv, &zero);
+    
+    httpd_uri_t ws = {
+        .uri       = "/ws",
+        .method    = HTTP_GET,
+        .handler   = ws_handler,
+        .user_ctx  = NULL,
+#if defined(CONFIG_HTTPD_WS_SUPPORT) && CONFIG_HTTPD_WS_SUPPORT
+        .is_websocket = true,                // <-- required when WS is enabled
+#endif
+    };
+    httpd_register_uri_handler(srv, &ws);
+
+    ESP_LOGI(TAG, "HTTP server started on port %d", http_cfg.server_port);
+
+    return ESP_OK;
 }

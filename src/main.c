@@ -5,12 +5,12 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
-#include "driver/ledc.h"
 #include "driver/i2c.h"
-#include "mpu6050.c"
-#include "pwm.c"
-#include "espnow.c"
-#include "server.c"
+#include "nvs_flash.h"
+
+#include "pwm.h"
+#include "mpu6050.h"
+#include "server.h"
 
 static const char *TAGMAIN = "MAIN_RX";
 
@@ -56,28 +56,8 @@ void app_main(void) {
     };
     ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf2));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf2.mode, 0, 0, 0));
-
-    //espnow reciever
-    // uint8_t self[6];
-    // esp_read_mac(self, ESP_MAC_WIFI_STA);
-    // ESP_LOGI(TAGMAIN, "C6 RX MAC: %02X:%02X:%02X:%02X:%02X:%02X",
-    //          self[0],self[1],self[2],self[3],self[4],self[5]);
-
-    // espnow_init();
-
-    // // Receive callbacks
-    // ESP_ERROR_CHECK(esp_now_register_recv_cb(recv_cb));
-
-    // // If you want to restrict accepted peers, call esp_now_add_peer() with the sender MAC.
-    // // Otherwise, broadcast works too, but unicast is more reliable.
-
-    // // Create a 1-deep queue so producers never block; we only care about the latest packet
-    // q_inputs = xQueueCreate(1, sizeof(controller_pkt_t));
-
-    // // Start your consumer and your existing DMP task
-    // xTaskCreate(control_consumer_task, "ctrl_cons", 4096, NULL, 5, NULL);
-
-    // NVS init for Wi-Fi
+    
+    // NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -89,9 +69,8 @@ void app_main(void) {
     gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_GPIO, 1); // OFF (active-LOW)
 
-    wifi_init_softap();
-    s_server = start_webserver();
-
-    // xTaskCreate(pwm_cycle_task, "pwm_cycle_task", 4096, NULL, 5, NULL);
+    ESP_ERROR_CHECK(server_init());
+    xTaskCreate(ypr_task_polling, "ypr_poll", 4096, NULL, 5, NULL);
     // xTaskCreate(dmp_task_polling, "dmp_poll", 4096, NULL, 5, NULL);
+    // xTaskCreate(pwm_cycle_task, "pwm_cycle_task", 4096, NULL, 5, NULL);
 }
