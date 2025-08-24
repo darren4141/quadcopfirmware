@@ -8,6 +8,7 @@
         "nvs_flash.h": "c",
         "stdio.h": "c",
         "stdlib.h": "c",
-        "i2c.h": "c"
+        "i2c.h": "c",
+        "esp_err.h": "c"
     }
 }

@@ -475,7 +475,7 @@ esp_err_t mpu_dmp_init(void)
     return ESP_OK;
 }
 
-esp_err_t mpu_init_nodmp(uint32_t bus_hz)
+esp_err_t mpu_init(uint32_t bus_hz)
 {
     // 1) I2C at requested speed (e.g., 400 kHz)
     ESP_ERROR_CHECK(i2c_bus_reinit(bus_hz));
