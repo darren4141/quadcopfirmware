@@ -386,7 +386,10 @@ void ypr_task_polling(void *arg)
     float yaw=0.f, pitch=0.f, roll=0.f;     // degrees
     const float alpha = 0.98f;              // complementary blend
     const int   loop_hz = 200;              // loop rate
-    const TickType_t period = pdMS_TO_TICKS(1000/loop_hz);
+    TickType_t period = pdMS_TO_TICKS(1000/loop_hz);
+    if(period == 0){
+        period = 1;
+    }
     TickType_t next = xTaskGetTickCount();
 
     int16_t ax_i, ay_i, az_i, gx_i, gy_i, gz_i;
