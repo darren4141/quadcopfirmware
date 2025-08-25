@@ -6,8 +6,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/i2c.h"
-// #include "nvs.h"
-#include "nvs_flash.h"
+#include "nvs.h"
 
 #include "pwm.h"
 #include "mpu6050.h"
@@ -21,12 +20,9 @@ static const char *TAGMAIN = "MAIN_RX";
 #define D8_PIN 19
 
 void app_main(void) {
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
-    }
-    // LED
+    
+    ESP_ERROR_CHECK(nvs_init());
+
     gpio_reset_pin(LED_GPIO);
     gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_GPIO, 1); // OFF (active-LOW)
