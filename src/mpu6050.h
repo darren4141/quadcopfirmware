@@ -2,15 +2,7 @@
 #include "esp_err.h"
 #include "driver/i2c.h"
 #include "dmp_firmware.h"
-
-//I2C config
-#define I2C_SDA_PIN         22
-#define I2C_SCL_PIN         23
-
-#define I2C_PORT            I2C_NUM_0
-#define I2C_FREQ_HZ_INIT     100000   // use 100 kHz for DMP upload
-#define I2C_FREQ_HZ_RUN      400000   // switch to 400 kHz after init
-#define I2C_TIMEOUT_MS       5000     
+#include "i2c.h"
 
 //MPU reg & addresses
 #define MPU_ADDR_LOW            0x68
