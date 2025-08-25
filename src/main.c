@@ -20,14 +20,14 @@ static const char *TAGMAIN = "MAIN_RX";
 #define D8_PIN 19
 
 void app_main(void) {
-    
+
     ESP_ERROR_CHECK(nvs_init());
 
     gpio_reset_pin(LED_GPIO);
     gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_GPIO, 1); // OFF (active-LOW)
     
-    ESP_ERROR_CHECK (mpu_init(400000));
+    ESP_ERROR_CHECK (mpu_raw_init(400000));
     ESP_ERROR_CHECK(server_init());
     xTaskCreate(ypr_task_polling, "ypr_poll", 4096, NULL, 5, NULL);
     // xTaskCreate(dmp_task_polling, "dmp_poll", 4096, NULL, 5, NULL);

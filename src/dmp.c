@@ -1,4 +1,4 @@
-#include "dmp_firmware.h"
+#include "dmp.h"
 
 #define MPU6050_DMP_CODE_SIZE       1929    // dmpMemory[]
 #define MPU6050_DMP_CONFIG_SIZE     192     // dmpConfig[]

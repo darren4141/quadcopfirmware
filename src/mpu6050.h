@@ -1,7 +1,7 @@
 #pragma once
 #include "esp_err.h"
 #include "driver/i2c.h"
-#include "dmp_firmware.h"
+#include "dmp.h"
 #include "i2c.h"
 
 //MPU reg & addresses
@@ -49,18 +49,22 @@
 
 #define MPU_REG_ACCEL_XOUT_H     0x3B
 
+#define ACCEL_SENS_2G     16384.0f   // LSB per g
+#define GYRO_SENS_250DPS  131.0f     // LSB per deg/s
+#define RAD2DEG           57.2957795f
+
 extern uint8_t mpu_addr;
 
 esp_err_t mpu_detect(void);
 
-esp_err_t mpu_basic_init(void);
+esp_err_t mpu_device_init(void);
+
+esp_err_t mpu_raw_init();
+
+esp_err_t mpu_dmp_init(void);
 
 esp_err_t mpu_dmp_initialize(void);
 
 void dmp_task_polling(void *arg);
 
 void ypr_task_polling(void *arg);
-
-esp_err_t mpu_dmp_init(void);
-
-esp_err_t mpu_init(uint32_t bus_hz);
