@@ -1,70 +1,96 @@
 #pragma once
+#include <stdint.h>
+#include <stdbool.h>
 #include "esp_err.h"
 #include "driver/i2c.h"
-#include "dmp.h"
-#include "i2c.h"
 
-//MPU reg & addresses
-#define MPU_ADDR_LOW            0x68
-#define MPU_ADDR_HIGH           0x69
-#define MPU_REG_WHO_AM_I        0x75
-#define MPU_REG_PWR_MGMT_1      0x6B
-#define MPU_REG_SMPLRT_DIV      0x19
-#define MPU_REG_CONFIG          0x1A
-#define MPU_REG_GYRO_CONFIG     0x1B
-#define MPU_REG_ACCEL_CONFIG    0x1C
-#define MPU_REG_INT_ENABLE      0x38
-#define MPU_REG_INT_STATUS      0x3A
-#define MPU_REG_USER_CTRL       0x6A
-#define MPU_REG_FIFO_EN         0x23
-#define MPU_REG_FIFO_COUNTH     0x72
-#define MPU_REG_FIFO_COUNTL     0x73
-#define MPU_REG_FIFO_RW         0x74
-#define MPU_REG_SIG_PATH_RST    0x68
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// DMP memory access
-#define MPU_REG_BANK_SEL        0x6D
-#define MPU_REG_MEM_START_ADDR  0x6E
-#define MPU_REG_MEM_R_W         0x6F
-#define MPU_REG_DMP_CFG_1       0x70
-#define MPU_REG_DMP_CFG_2       0x71
+// Change these to match your wiring (example pins shown)
+#ifndef MPU6050_I2C_PORT
+#define MPU6050_I2C_PORT         I2C_NUM_0
+#endif
 
-// USER_CTRL bits
-#define BIT_DMP_EN          0x80
-#define BIT_FIFO_EN         0x40
-#define BIT_I2C_MST_EN      0x20
-#define BIT_I2C_IF_DIS      0x10
-#define BIT_FIFO_RST        0x04
-#define BIT_I2C_MST_RST     0x02
-#define BIT_SIG_COND_RST    0x01
+#ifndef MPU6050_I2C_FREQ_HZ
+#define MPU6050_I2C_FREQ_HZ      100000
+#endif
 
-// INT_ENABLE bits
-#define BIT_DMP_INT_EN      0x02
+// Default addresses: AD0 low -> 0x68, AD0 high -> 0x69
+#define MPU6050_ADDR_DEFAULT     0x69
 
-// DMP packet size
-#define DMP_PACKET_SIZE     42
+// Registers
+#define MPU6050_REG_PWR_MGMT_1   0x6B
+#define MPU6050_REG_SMPLRT_DIV   0x19
+#define MPU6050_REG_CONFIG       0x1A
+#define MPU6050_REG_GYRO_CONFIG  0x1B
+#define MPU6050_REG_ACCEL_CONFIG 0x1C
+#define MPU6050_REG_ACCEL_XOUT_H 0x3B
+#define MPU6050_REG_WHO_AM_I     0x75
 
-#define MAX_BATCH_PACKETS  8         // how many packets per burst read
-#define POLL_MS            3         // for ~100 Hz DMP, poll every ~3–5 ms
+#define MPU6050_TASK_PERIOD_MS 10   // ~100 Hz
 
-#define MPU_REG_ACCEL_XOUT_H     0x3B
+typedef struct {
+    i2c_port_t i2c_port;
+    uint8_t    addr;
 
-#define ACCEL_SENS_2G     16384.0f   // LSB per g
-#define GYRO_SENS_250DPS  131.0f     // LSB per deg/s
-#define RAD2DEG           57.2957795f
+    // Config (derived scales)
+    float accel_lsb_per_g;     // e.g. 16384 for ±2g
+    float gyro_lsb_per_dps;    // e.g. 131 for ±250 dps
 
-extern uint8_t mpu_addr;
+    // Biases (in g for accel, dps for gyro)
+    float ax_bias, ay_bias, az_bias;
+    float gx_bias, gy_bias, gz_bias;
 
-esp_err_t mpu_detect(void);
+    // Mahony filter state
+    float q0, q1, q2, q3;      // unit quaternion
+    float exInt, eyInt, ezInt; // integral error terms
+    float kp, ki;              // gains
 
-esp_err_t mpu_device_init(void);
+    // Timing
+    uint64_t last_update_us;   // for internal dt calculation
+} mpu6050_t;
 
-esp_err_t mpu_raw_init();
 
-esp_err_t mpu_dmp_init(void);
+// I2C setup helper (install driver). Call once at startup.
+esp_err_t mpu6050_i2c_init(i2c_port_t port, gpio_num_t sda, gpio_num_t scl, uint32_t freq_hz);
 
-esp_err_t mpu_dmp_initialize(void);
+// Device init + basic configuration (±2g, ±250 dps, DLPF=42 Hz, ~200 Hz sample rate)
+esp_err_t mpu6050_init(mpu6050_t *dev, i2c_port_t port, uint8_t addr);
 
-void dmp_task_polling(void *arg);
+// Optional: change full-scale ranges and rates
+esp_err_t mpu6050_config(mpu6050_t *dev,
+                         uint8_t accel_fs_sel,   // 0:±2g,1:±4g,2:±8g,3:±16g
+                         uint8_t gyro_fs_sel,    // 0:±250,1:±500,2:±1000,3:±2000 dps
+                         uint8_t dlpf_cfg,       // 0..6 (0=260Hz,3=42Hz,6=5Hz)
+                         uint8_t smplrt_div);    // SampleRate = 1kHz/(1+div) when DLPF on
 
-void ypr_task_polling(void *arg);
+// Quick WHO_AM_I check (should be 0x68)
+esp_err_t mpu6050_whoami(mpu6050_t *dev, uint8_t *out);
+
+// Calibrate biases (keep device still on a flat surface).
+// samples: e.g. 500. Takes ~samples/200 seconds at 200 Hz.
+esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples);
+
+// Read raw sensor values
+esp_err_t mpu6050_read_raw(mpu6050_t *dev,
+                           int16_t *ax, int16_t *ay, int16_t *az,
+                           int16_t *gx, int16_t *gy, int16_t *gz);
+
+// Update internal filter and return yaw/pitch/roll in degrees.
+// Uses internal dt from esp_timer; call at a fixed-ish rate (100–500 Hz).
+esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg);
+
+// Reset filter orientation to identity (yaw=0, pitch=0, roll=0)
+void mpu6050_reset_filter(mpu6050_t *dev);
+
+// Helper: convert quaternion -> yaw/pitch/roll (deg)
+void mpu6050_quat_to_ypr(float q0, float q1, float q2, float q3,
+                         float *yaw_deg, float *pitch_deg, float *roll_deg);
+
+void mpu6050_task(void *pvParameters);
+
+#ifdef __cplusplus
+}
+#endif

@@ -10,8 +10,8 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
-#include "esp_http_server.h"
-
+#include "esp_err.h"
+#include "packet.h"
 
 // ----------- YPR ring buffer + offsets -----------
 static float ring[RING_N][3];    // [i][0]=yaw, [1]=pitch, [2]=roll
@@ -99,7 +99,6 @@ static esp_err_t root_get(httpd_req_t *req) {
         "function hx(n){return n.toString(16).toUpperCase();}"
         "function pkt(){return `P:${hx(wasd)}${hx(ijkl)}${hx(tfgh)}`;}"
         "function send(){ if(ws&&ws.readyState===1) ws.send(pkt()); }"
-        "function zero(){ if(ws&&ws.readyState===1) ws.send('Z'); fetch('/zero',{method:'POST'}).catch(()=>{}); }"
         "function up(){document.getElementById('state').textContent=`WASD=0x${hx(wasd)} IJKL=0x${hx(ijkl)} TFGH=0x${hx(tfgh)}`;}"
         "addEventListener('keydown',e=>{const k=e.key.toLowerCase(); if(k==='t'&&!sentZero){sentZero=true;zero();}"
         " if(keyBit[k]){let s=keyBit[k][0],b=keyBit[k][1]; if(s==='wasd')wasd|=(1<<b); else if(s==='ijkl')ijkl|=(1<<b); else tfgh|=(1<<b); send(); up(); }});"
@@ -148,36 +147,6 @@ static esp_err_t zero_post(httpd_req_t *req) {
     return httpd_resp_sendstr(req, "ZEROED");
 }
 
-// ---------------- WebSocket: key packets + 'Z' zero ----------------
-static esp_err_t ws_handler(httpd_req_t *req) {
-    if (req->method == HTTP_GET) return ESP_OK; // handshake complete
-
-    httpd_ws_frame_t f = {0};
-    f.type = HTTPD_WS_TYPE_TEXT;
-    ESP_ERROR_CHECK(httpd_ws_recv_frame(req, &f, 0));
-    if (f.len == 0) return ESP_OK;
-
-    f.payload = malloc(f.len + 1);
-    if (!f.payload) return ESP_ERR_NO_MEM;
-    ESP_ERROR_CHECK(httpd_ws_recv_frame(req, &f, f.len));
-    f.payload[f.len] = 0;
-
-    if (f.len >= 5 && f.payload[0]=='P' && f.payload[1]==':') {
-        // key packet; demo: LED on if any nibble nonzero
-        bool any = 0;
-        for (int i=2; i<5; i++) {
-            int v = (int)strtol((char[]){(char)f.payload[i],0}, NULL, 16) & 0xF;
-            if (v) any = 1;
-        }
-        gpio_set_level(LED_GPIO, any ? 0 : 1); // active-LOW
-    } else if ((f.len==1 && f.payload[0]=='Z')) {
-        do_zero();
-    }
-
-    free(f.payload);
-    return ESP_OK;
-}
-
 // ---------------- Wi-Fi (AP) + server ----------------
 void wifi_ap_start(void) {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -199,6 +168,86 @@ void wifi_ap_start(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+// ---------------- WebSocket ----------------
+esp_err_t ws_handler(httpd_req_t *req) {
+    if (req->method == HTTP_GET){
+        return ESP_OK;
+    }
+
+    httpd_ws_frame_t f = {0};
+    f.type = HTTPD_WS_TYPE_TEXT;
+
+    //peek at length
+    ESP_ERROR_CHECK(httpd_ws_recv_frame(req, &f, 0));
+    if (f.len == 0) return ESP_OK;
+
+    f.payload = malloc(f.len + 1);
+    if (!f.payload) return ESP_ERR_NO_MEM;
+    ESP_ERROR_CHECK(httpd_ws_recv_frame(req, &f, f.len));
+    f.payload[f.len] = 0;
+
+    if (f.len >= 5 && f.payload[0]=='P' && f.payload[1]==':') {
+        // Decode three hex digits into uint8_t values
+        key_packet_t pkt = {
+            .wasd = (uint8_t)strtol((char[]){f.payload[2],0}, NULL, 16) & 0xF,
+            .tfgh = (uint8_t)strtol((char[]){f.payload[3],0}, NULL, 16) & 0xF,
+            .ijkl = (uint8_t)strtol((char[]){f.payload[4],0}, NULL, 16) & 0xF
+        };
+
+        if(pkt.wasd & 0x01){ //W pressed
+    
+        }
+        
+        if(pkt.wasd & 0x02){ //A pressed
+            printf("A pressed");
+        }
+        
+        if(pkt.wasd & 0x04){ //S pressed
+            printf("S pressed");
+        }
+        
+        if(pkt.wasd & 0x08){ //D pressed
+            printf("D pressed");
+        }
+        
+        if(pkt.ijkl & 0x01){ //I pressed
+            printf("I pressed");
+        }
+        
+        if(pkt.ijkl & 0x02){ //J pressed
+            printf("J pressed");
+        }
+        
+        if(pkt.ijkl & 0x04){ //K pressed
+            printf("K pressed");
+        }
+        
+        if(pkt.ijkl & 0x08){ //L pressed
+            printf("L pressed");
+        }
+        
+        if(pkt.tfgh & 0x01){ //T pressed - Zeroing function
+            printf("T pressed");
+            do_zero();
+        }
+        
+        if(pkt.tfgh & 0x02){ //F pressed
+            printf("F pressed");
+        }
+        
+        if(pkt.tfgh & 0x04){ //G pressed
+            printf("G pressed");
+        }
+        
+        if(pkt.tfgh & 0x08){ //H pressed
+            printf("H pressed");
+        }
+    }
+
+    free(f.payload);
+    return ESP_OK;
 }
 
 esp_err_t server_init(void) {

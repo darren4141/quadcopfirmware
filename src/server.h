@@ -1,9 +1,5 @@
 #pragma once
-#include "esp_err.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "esp_http_server.h"
 
 #define TAG "SERVER"
 #define LED_GPIO 15          // onboard LED is active-LOW
@@ -16,6 +12,4 @@ void wifi_ap_start(void);
 
 esp_err_t server_init(void);
 
-#ifdef __cplusplus
-}
-#endif
+esp_err_t ws_handler(httpd_req_t *req);

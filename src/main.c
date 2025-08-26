@@ -12,7 +12,8 @@
 #include "mpu6050.h"
 #include "server.h"
 
-static const char *TAGMAIN = "MAIN_RX";
+#define I2C_SDA 22
+#define I2C_SCL 23
 
 #define D0_PIN 0
 #define D2_PIN 2
@@ -20,16 +21,36 @@ static const char *TAGMAIN = "MAIN_RX";
 #define D8_PIN 19
 
 void app_main(void) {
+    ESP_ERROR_CHECK(mpu6050_i2c_init(MPU6050_I2C_PORT, I2C_SDA, I2C_SCL, MPU6050_I2C_FREQ_HZ));
 
-    ESP_ERROR_CHECK(nvs_init());
+    mpu6050_t imu;
+    ESP_ERROR_CHECK(mpu6050_init(&imu, MPU6050_I2C_PORT, MPU6050_ADDR_DEFAULT));
 
-    gpio_reset_pin(LED_GPIO);
-    gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_GPIO, 1); // OFF (active-LOW)
-    
-    ESP_ERROR_CHECK (mpu_raw_init(400000));
-    ESP_ERROR_CHECK(server_init());
-    xTaskCreate(ypr_task_polling, "ypr_poll", 4096, NULL, 5, NULL);
-    // xTaskCreate(dmp_task_polling, "dmp_poll", 4096, NULL, 5, NULL);
-    // xTaskCreate(pwm_cycle_task, "pwm_cycle_task", 4096, NULL, 5, NULL);
+    // Optional: verify device
+    uint8_t who = 0;
+    ESP_ERROR_CHECK(mpu6050_whoami(&imu, &who));
+    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (expect 0x68)", who);
+
+    // Optional: tweak filter gains
+    imu.kp = 3.0f;   // 2.0–5.0 good for snappy response
+    imu.ki = 0.02f;  // small integral helps gyro bias; set 0.0f if you see drift overshoot
+
+    // Calibrate (keep the board flat and still)
+    ESP_ERROR_CHECK(mpu6050_calibrate(&imu, 500));
+
+    // Main loop at ~200 Hz
+    TickType_t last = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(10);
+
+    while (1) {
+        float yaw, pitch, roll;
+        esp_err_t err = mpu6050_update_ypr(&imu, &yaw, &pitch, &roll);
+        if (err == ESP_OK) {
+            // Yaw will drift without a magnetometer
+            ESP_LOGI(TAG, "YPR: yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
+        } else {
+            ESP_LOGW(TAG, "update error: %s", esp_err_to_name(err));
+        }
+        vTaskDelayUntil(&last, period);
+    }
 }

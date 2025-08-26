@@ -1,443 +1,291 @@
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
+#include "mpu6050.h"
 #include <math.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_err.h"
-#include "mpu6050.h"
-#include "server.h"
+#include "esp_timer.h"
+#include "esp_check.h"
 
-uint8_t mpu_addr = 0;
+static const char *TAG = "MPU6050";
 
-static const char *TAGMPU = "MPU6050_DMP";
-
-esp_err_t mpu_detect(void){
-    uint8_t who = 0;
-    if(i2c_read_reg(MPU_ADDR_LOW, MPU_REG_WHO_AM_I, &who) == ESP_OK && who == 0x68){
-        mpu_addr = MPU_ADDR_LOW;
-        return ESP_OK;
-    }
-    if(i2c_read_reg(MPU_ADDR_HIGH, MPU_REG_WHO_AM_I, &who) == ESP_OK && who == 0x68){
-        mpu_addr = MPU_ADDR_HIGH;
-        return ESP_OK;
-    }
-    return ESP_FAIL;
+// --- Low-level I2C helpers ---
+static inline esp_err_t i2c_write_reg(i2c_port_t port, uint8_t addr, uint8_t reg, uint8_t val) {
+    uint8_t buf[2] = { reg, val };
+    return i2c_master_write_to_device(port, addr, buf, 2, pdMS_TO_TICKS(50));
 }
 
-esp_err_t mpu_device_init(void) {
-
-    //DEVICE_RESET
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_PWR_MGMT_1, 0x80));
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    //CLKSEL to PLL with X-Gyro reference
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_PWR_MGMT_1, 0x01));
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    // SIG_COND_RESET - reset all DMP/FIFO/I2C_MST
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, 0x00));
-
-    // Reset gyro
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_SIG_PATH_RST, 0x07));
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    // Config + sample rate (default vaules)
-
-    //DLFP
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_CONFIG, 0x03));
-    //Sample rate divider
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_SMPLRT_DIV, 4));
-    //Gyro config
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_GYRO_CONFIG, 0x00));
-    //Accel config
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_ACCEL_CONFIG, 0x00));
-    return ESP_OK;
+static inline esp_err_t i2c_read_reg(i2c_port_t port, uint8_t addr, uint8_t reg, uint8_t *val) {
+    return i2c_master_write_read_device(port, addr, &reg, 1, val, 1, pdMS_TO_TICKS(50));
 }
 
-//initialize the I2C driver at a given speed
-static esp_err_t i2c_bus_init(uint32_t hz){
-    // If driver already installed, remove it first
-    i2c_driver_delete(I2C_PORT);
+static inline esp_err_t i2c_read_bytes(i2c_port_t port, uint8_t addr, uint8_t reg, uint8_t *data, size_t len) {
+    return i2c_master_write_read_device(port, addr, &reg, 1, data, len, pdMS_TO_TICKS(50));
+}
 
-    i2c_config_t conf = {
+// --- Public API ---
+
+esp_err_t mpu6050_i2c_init(i2c_port_t port, gpio_num_t sda, gpio_num_t scl, uint32_t freq_hz) {
+    i2c_config_t cfg = {
         .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_SDA_PIN,
-        .scl_io_num = I2C_SCL_PIN,
+        .sda_io_num = sda,
+        .scl_io_num = scl,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = hz,
+        .master.clk_speed = freq_hz,
         .clk_flags = 0
     };
-    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf));
-    return i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0);
-}
-
-esp_err_t mpu_raw_init(){
-    // 1) I2C at requested speed (e.g., 400 kHz)
-    ESP_ERROR_CHECK(i2c_bus_init(I2C_FREQ_HZ_RUN));
-
-    // 2) Detect + basic init
-    ESP_ERROR_CHECK(mpu_detect());
-    ESP_LOGI(TAGMPU, "MPU6050 detected at 0x%02X", mpu_addr);
-    ESP_ERROR_CHECK(mpu_device_init());
-
-    // 3) Ensure DMP/FIFO/INT are OFF so raw reads are clean
-    // USER_CTRL: clear DMP, FIFO; reset paths
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, 0x00));
-    // Disable FIFO
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_FIFO_EN, 0x00));
-    // Disable DMP interrupt
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_INT_ENABLE, 0x00));
-
+    ESP_RETURN_ON_ERROR(i2c_param_config(port, &cfg), TAG, "param_config");
+    ESP_RETURN_ON_ERROR(i2c_driver_install(port, cfg.mode, 0, 0, 0), TAG, "driver_install");
     return ESP_OK;
 }
 
-esp_err_t mpu_dmp_init(void){
-    // 1) I2C @ 100 kHz for robust DMP upload
-    ESP_ERROR_CHECK(i2c_bus_init(I2C_FREQ_HZ_INIT));
+static void set_scales(mpu6050_t *dev, uint8_t accel_fs_sel, uint8_t gyro_fs_sel) {
+    // From datasheet
+    switch (accel_fs_sel & 3) {
+        case 0: dev->accel_lsb_per_g = 16384.0f; break; // ±2g
+        case 1: dev->accel_lsb_per_g = 8192.0f;  break; // ±4g
+        case 2: dev->accel_lsb_per_g = 4096.0f;  break; // ±8g
+        default:dev->accel_lsb_per_g = 2048.0f;  break; // ±16g
+    }
+    switch (gyro_fs_sel & 3) {
+        case 0: dev->gyro_lsb_per_dps = 131.0f;  break; // ±250
+        case 1: dev->gyro_lsb_per_dps = 65.5f;   break; // ±500
+        case 2: dev->gyro_lsb_per_dps = 32.8f;   break; // ±1000
+        default:dev->gyro_lsb_per_dps = 16.4f;   break; // ±2000
+    }
+}
 
-    // 2) Detect + basic init
-    ESP_ERROR_CHECK(mpu_detect());
-    ESP_LOGI(TAGMPU, "MPU6050 detected at 0x%02X", mpu_addr);
-    ESP_ERROR_CHECK(mpu_device_init());
+esp_err_t mpu6050_init(mpu6050_t *dev, i2c_port_t port, uint8_t addr) {
+    if (!dev) return ESP_ERR_INVALID_ARG;
+    memset(dev, 0, sizeof(*dev));
+    dev->i2c_port = port;
+    dev->addr = addr ? addr : MPU6050_ADDR_DEFAULT;
 
-    // 3) DMP init/upload
-    ESP_ERROR_CHECK(mpu_dmp_initialize());
-    ESP_LOGI(TAGMPU, "DMP ready; packet size = %d", DMP_PACKET_SIZE);
+    // Wake up device
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_PWR_MGMT_1, 0x00), TAG, "wake");
 
-    // 4) Switch I2C bus to 400 kHz for runtime
-    ESP_ERROR_CHECK(i2c_bus_init(I2C_FREQ_HZ_RUN));
-    
+    // Set DLPF = 42Hz (CONFIG=3) for stable sampling
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_CONFIG, 3), TAG, "dlpf");
+
+    // Gyro ±250 dps
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_GYRO_CONFIG, 0<<3), TAG, "gyro");
+
+    // Accel ±2g
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_ACCEL_CONFIG, 0<<3), TAG, "accel");
+
+    // Sample rate: with DLPF on, base=1kHz; divider=4 -> 200 Hz
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_SMPLRT_DIV, 4), TAG, "smplrt");
+
+    set_scales(dev, 0, 0);
+
+    // Filter defaults
+    dev->q0 = 1.0f; dev->q1 = dev->q2 = dev->q3 = 0.0f;
+    dev->kp = 2.0f;   // Proportional gain (increase for faster response)
+    dev->ki = 0.0f;   // Integral gain (0 to start; small value helps steady-state)
+    dev->exInt = dev->eyInt = dev->ezInt = 0.0f;
+    dev->last_update_us = esp_timer_get_time();
     return ESP_OK;
 }
 
-static esp_err_t mpu_read_accel_gyro_raw(int16_t *ax, int16_t *ay, int16_t *az, int16_t *gx, int16_t *gy, int16_t *gz){
-    uint8_t reg = MPU_REG_ACCEL_XOUT_H;
+esp_err_t mpu6050_config(mpu6050_t *dev, uint8_t accel_fs_sel, uint8_t gyro_fs_sel,
+                         uint8_t dlpf_cfg, uint8_t smplrt_div) {
+    if (!dev) return ESP_ERR_INVALID_ARG;
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_ACCEL_CONFIG, (accel_fs_sel & 3) << 3), TAG, "acc_cfg");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_GYRO_CONFIG,  (gyro_fs_sel  & 3) << 3), TAG, "gyr_cfg");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_CONFIG,       dlpf_cfg & 7), TAG, "dlpf_cfg");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_SMPLRT_DIV,   smplrt_div), TAG, "sr_div");
+    set_scales(dev, accel_fs_sel, gyro_fs_sel);
+    return ESP_OK;
+}
+
+esp_err_t mpu6050_whoami(mpu6050_t *dev, uint8_t *out) {
+    if (!dev || !out) return ESP_ERR_INVALID_ARG;
+    return i2c_read_reg(dev->i2c_port, dev->addr, MPU6050_REG_WHO_AM_I, out);
+}
+
+esp_err_t mpu6050_read_raw(mpu6050_t *dev,
+                           int16_t *ax, int16_t *ay, int16_t *az,
+                           int16_t *gx, int16_t *gy, int16_t *gz) {
+    if (!dev) return ESP_ERR_INVALID_ARG;
     uint8_t buf[14];
-    esp_err_t err = i2c_master_write_read_device(I2C_PORT, mpu_addr, &reg, 1, buf, sizeof(buf), pdMS_TO_TICKS(I2C_TIMEOUT_MS));
-    if (err != ESP_OK){
-        return err;
-    }
-
-    *ax = (int16_t)((buf[0] << 8) | buf[1]);
-    *ay = (int16_t)((buf[2] << 8) | buf[3]);
-    *az = (int16_t)((buf[4] << 8) | buf[5]);
-    // temp: buf[6..7] (unused)
-    *gx = (int16_t)((buf[8] << 8) | buf[9]);
-    *gy = (int16_t)((buf[10] << 8) | buf[11]);
-    *gz = (int16_t)((buf[12] << 8) | buf[13]);
+    esp_err_t err = i2c_read_bytes(dev->i2c_port, dev->addr, MPU6050_REG_ACCEL_XOUT_H, buf, sizeof(buf));
+    if (err != ESP_OK) return err;
+    if (ax) *ax = (int16_t)((buf[0] << 8) | buf[1]);
+    if (ay) *ay = (int16_t)((buf[2] << 8) | buf[3]);
+    if (az) *az = (int16_t)((buf[4] << 8) | buf[5]);
+    if (gx) *gx = (int16_t)((buf[8] << 8) | buf[9]);
+    if (gy) *gy = (int16_t)((buf[10] << 8) | buf[11]);
+    if (gz) *gz = (int16_t)((buf[12] << 8) | buf[13]);
     return ESP_OK;
 }
 
-//----------------MPU6050 DMP FUNCTIONS----------------------
-static esp_err_t mpu_set_memory_bank(uint8_t bank) {
-    return i2c_write_reg(mpu_addr, MPU_REG_BANK_SEL, bank);
-}
-static esp_err_t mpu_set_memory_start_address(uint8_t addr) {
-    return i2c_write_reg(mpu_addr, MPU_REG_MEM_START_ADDR, addr);
-}
+esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples) {
+    if (!dev || samples <= 0) return ESP_ERR_INVALID_ARG;
+    ESP_LOGI(TAG, "Calibrating... keep the sensor still (%d samples)", samples);
 
-// Ultra-conservative writer with verify + logging
-static esp_err_t mpu_write_memory_block(const uint8_t *data, uint16_t len, uint8_t bank, uint8_t addr) {
-    uint16_t i = 0;
-    uint8_t curBank = bank;
-    uint8_t curAddr = addr;
+    double ax_sum=0, ay_sum=0, az_sum=0;
+    double gx_sum=0, gy_sum=0, gz_sum=0;
 
-    while (i < len) {
-        ESP_ERROR_CHECK(mpu_set_memory_bank(curBank));
-        ESP_ERROR_CHECK(mpu_set_memory_start_address(curAddr));
-
-        // Write one byte
-        esp_err_t err = i2c_write_bytes(mpu_addr, MPU_REG_MEM_R_W, &data[i], 1);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAGMPU, "MEM write timeout @ i=%u bank=%u addr=%u (val=0x%02X)", i, curBank, curAddr, data[i]);
-            return err;
-        }
-
-        // Verify
-        uint8_t rd = 0;
-        uint8_t reg_r_w = MPU_REG_MEM_R_W;
-        ESP_ERROR_CHECK(mpu_set_memory_bank(curBank));
-        ESP_ERROR_CHECK(mpu_set_memory_start_address(curAddr));
-        err = i2c_read_reg(I2C_PORT, mpu_addr, &reg_r_w);
-        if (err != ESP_OK || rd != data[i]) {
-            ESP_LOGE(TAGMPU, "Verify fail @ i=%u bank=%u addr=%u wrote=0x%02X read=0x%02X err=%s",
-                     i, curBank, curAddr, data[i], rd, esp_err_to_name(err));
-            return (err != ESP_OK) ? err : ESP_FAIL;
-        }
-
-        // Progress log every 16 bytes
-        if ((i & 0x0F) == 0) {
-            ESP_LOGI(TAGMPU, "DMP upload %4u / %u (bank=%u addr=%u)", i, len, curBank, curAddr);
-        }
-
-        // Advance
-        i++;
-        curAddr++;
-        if (curAddr == 0) { // wrapped past 0xFF
-            curBank++;
-        }
-
-        // Tiny breather helps some clones
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-    ESP_LOGI(TAGMPU, "DMP upload done (%u bytes).", len);
-    return ESP_OK;
-}
-
-static esp_err_t mpu_write_dmp_config_set(const uint8_t *cfg, uint16_t cfgSize) {
-    uint16_t i = 0;
-    while (i + 3 <= cfgSize) {
-        uint8_t bank   = cfg[i++];
-        uint8_t offset = cfg[i++];
-        uint8_t length = cfg[i++];
-
-        if (length > 0) {
-            if (i + length > cfgSize) return ESP_ERR_INVALID_SIZE;
-            ESP_LOGI(TAGMPU, "DMP cfg bank=%u offset=%u len=%u", bank, offset, length);
-            ESP_ERROR_CHECK(mpu_write_memory_block(&cfg[i], length, bank, offset));
-            i += length;
-        } else {
-            // SPECIAL INSTRUCTION: next byte is a command
-            if (i >= cfgSize) return ESP_ERR_INVALID_SIZE;
-            uint8_t special = cfg[i++];
-            ESP_LOGI(TAGMPU, "DMP special=0x%02X", special);
-            switch (special) {
-                case 0x01: {
-                    // Enable DMP-related interrupts (same as MotionApps v2.0)
-                    // INT_ENABLE = 0x32 (FIFO overflow + DMP interrupt)
-                    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_INT_ENABLE, 0x32));
-                    break;
-                }
-                default:
-                    ESP_LOGW(TAGMPU, "Unknown DMP special 0x%02X (skipping)", special);
-                    break;
-            }
-        }
-    }
-    return ESP_OK;
-}
-
-// ---------- DMP init ----------
-esp_err_t mpu_dmp_initialize(void) {
-    // Make sure DMP and FIFO are off/reset
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, 0x00));
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_FIFO_RST | BIT_I2C_MST_RST | BIT_SIG_COND_RST));
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    // Upload DMP firmware
-    ESP_LOGI(TAGMPU, "Uploading DMP (%u bytes)", (unsigned)dmpMemoryLength);
-    ESP_ERROR_CHECK(mpu_write_memory_block(dmpMemory, dmpMemoryLength, 0x00, 0x00));
-
-    // Apply DMP config
-    ESP_LOGI(TAGMPU, "Applying DMP config (%u bytes)", (unsigned)dmpConfigLength);
-    ESP_ERROR_CHECK(mpu_write_dmp_config_set(dmpConfig, dmpConfigLength));
-
-    // Apply DMP updates (if present)
-    if (dmpUpdatesLength) {
-        ESP_LOGI(TAGMPU, "Applying DMP updates (%u bytes)", (unsigned)dmpUpdatesLength);
-        ESP_ERROR_CHECK(mpu_write_dmp_config_set(dmpUpdates, dmpUpdatesLength));
-    }
-
-    // Set DMP rate/output (commonly via DMP_CFG_1 / DMP_CFG_2 or via config set)
-    // These magic values mirror MotionApps v2 defaults (works with 42-byte packet)
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_DMP_CFG_1, 0x03));
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_DMP_CFG_2, 0x00));
-
-    // Enable FIFO for DMP
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_FIFO_EN, 0x00)); // DMP writes to FIFO, so no raw sensors here
-    // Clear FIFO
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_FIFO_RST));
-    vTaskDelay(pdMS_TO_TICKS(5));
-    // Enable DMP + FIFO
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_DMP_EN | BIT_FIFO_EN));
-
-    // Optionally enable DMP interrupt
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_INT_ENABLE, BIT_DMP_INT_EN));
-
-    // Flush once more
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_DMP_EN | BIT_FIFO_EN | BIT_FIFO_RST));
-    vTaskDelay(pdMS_TO_TICKS(5));
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_DMP_EN | BIT_FIFO_EN));
-
-    return ESP_OK;
-}
-
-// ---------- FIFO read helpers ----------
-static uint16_t mpu_fifo_count(void) {
-    uint8_t hi=0, lo=0;
-    i2c_read_reg(mpu_addr, MPU_REG_FIFO_COUNTH, &hi);
-    i2c_read_reg(mpu_addr, MPU_REG_FIFO_COUNTL, &lo);
-    return ((uint16_t)hi << 8) | lo;
-}
-static esp_err_t mpu_fifo_read(uint8_t *dst, size_t n) {
-    // FIFO_R_W supports burst reads without sending a new reg each byte
-    return i2c_master_write_read_device(I2C_PORT, mpu_addr, (uint8_t[]){MPU_REG_FIFO_RW}, 1, dst, n, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
-}
-
-static void quat_to_ypr(float qw, float qx, float qy, float qz, float *ypr) {
-    // MotionApps convention (Tait-Bryan Z-Y-X): yaw(Z), pitch(Y), roll(X)
-    float ys = atan2f(2.0f*qx*qy - 2.0f*qw*qz, 2.0f*qw*qw + 2.0f*qx*qx - 1.0f);
-    float ps = asinf(2.0f*qw*qy + 2.0f*qx*qz);
-    float rs = atan2f(2.0f*qw*qx - 2.0f*qy*qz, 2.0f*qw*qw + 2.0f*qz*qz - 1.0f);
-    ypr[0] = ys * RAD2DEG;
-    ypr[1] = ps * RAD2DEG;
-    ypr[2] = rs * RAD2DEG;
-}
-
-void dmp_task_polling(void *arg) {
-    // Ensure DMP+FIFO are enabled and FIFO is clean
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_FIFO_EN, 0x00)); // DMP writes packets itself
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_DMP_EN | BIT_FIFO_RST));
-    vTaskDelay(pdMS_TO_TICKS(2));
-    ESP_ERROR_CHECK(i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_DMP_EN | BIT_FIFO_EN));
-
-    uint8_t buf[DMP_PACKET_SIZE * MAX_BATCH_PACKETS];
-
-    TickType_t next = xTaskGetTickCount();
-    TickType_t period = pdMS_TO_TICKS(POLL_MS);
-    if (period == 0) period = 1;
-    
-    static uint32_t counter = 0;
-
-    for (;;) {
-        next += period;
-        counter++;
-
-        // Read everything available in batches
-        for (;;) {
-            uint16_t cnt = mpu_fifo_count();
-            if (cnt < DMP_PACKET_SIZE) break;
-
-            // Clamp to whole packets and our buffer size
-            uint16_t n_to_read = (cnt / DMP_PACKET_SIZE) * DMP_PACKET_SIZE;
-            if (n_to_read > sizeof(buf)) n_to_read = sizeof(buf);
-
-            if (mpu_fifo_read(buf, n_to_read) != ESP_OK) {
-                // If a transient error, bail to next poll tick
-                break;
-            }
-
-            // Parse packets; only print the LAST one to avoid serial bottleneck
-            for (uint16_t i = 0; i < n_to_read; i += DMP_PACKET_SIZE) {
-                const uint8_t *p = &buf[i];
-                int32_t q0i = (int32_t)((uint32_t)p[0]<<24 | (uint32_t)p[1]<<16 | (uint32_t)p[2]<<8 | p[3]);
-                int32_t q1i = (int32_t)((uint32_t)p[4]<<24 | (uint32_t)p[5]<<16 | (uint32_t)p[6]<<8 | p[7]);
-                int32_t q2i = (int32_t)((uint32_t)p[8]<<24 | (uint32_t)p[9]<<16 | (uint32_t)p[10]<<8 | p[11]);
-                int32_t q3i = (int32_t)((uint32_t)p[12]<<24 | (uint32_t)p[13]<<16 | (uint32_t)p[14]<<8 | p[15]);
-
-                const float Q30 = 1073741824.0f;
-                float qw = q0i / Q30;
-                float qx = q1i / Q30;
-                float qy = q2i / Q30;
-                float qz = q3i / Q30;
-
-                if (i + DMP_PACKET_SIZE >= n_to_read && counter % 10 == 0) {
-                    float ypr[3];
-                    quat_to_ypr(qw, qx, qy, qz, ypr);
-                    imu_push_ypr(ypr);
-                    printf("YPR[deg] %.2f, %.2f, %.2f\n", ypr[0], ypr[1], ypr[2]);
-                }
-            }
-        }
-
-        // Overflow guard (rare if you keep up)
-        uint16_t cnt = mpu_fifo_count();
-        if (cnt > 1000) {
-            i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_DMP_EN | BIT_FIFO_EN | BIT_FIFO_RST);
-            vTaskDelay(pdMS_TO_TICKS(2));
-            i2c_write_reg(mpu_addr, MPU_REG_USER_CTRL, BIT_DMP_EN | BIT_FIFO_EN);
-        }
-
-        vTaskDelayUntil(&next, period);
-    }
-}
-
-// Quick stationary gyro bias calibration (keep still)
-static esp_err_t mpu_calibrate_gyro_bias(int samples, float *bx, float *by, float *bz)
-{
-    int32_t sx = 0, sy = 0, sz = 0;
-    int16_t ax, ay, az, gx, gy, gz;
     for (int i = 0; i < samples; i++) {
-        esp_err_t err = mpu_read_accel_gyro_raw(&ax, &ay, &az, &gx, &gy, &gz);
+        int16_t ax, ay, az, gx, gy, gz;
+        esp_err_t err = mpu6050_read_raw(dev, &ax, &ay, &az, &gx, &gy, &gz);
         if (err != ESP_OK) return err;
-        sx += gx; sy += gy; sz += gz;
-        vTaskDelay(pdMS_TO_TICKS(5)); // ~200 Hz sampling during biasing
+
+        ax_sum += (double)ax; ay_sum += (double)ay; az_sum += (double)az;
+        gx_sum += (double)gx; gy_sum += (double)gy; gz_sum += (double)gz;
+
+        vTaskDelay(pdMS_TO_TICKS(5)); // ~200 Hz -> 5 ms
     }
-    *bx = (float)sx / samples;
-    *by = (float)sy / samples;
-    *bz = (float)sz / samples;
+
+    double ax_avg = ax_sum / samples;
+    double ay_avg = ay_sum / samples;
+    double az_avg = az_sum / samples;
+    double gx_avg = gx_sum / samples;
+    double gy_avg = gy_sum / samples;
+    double gz_avg = gz_sum / samples;
+
+    // Convert to g and dps, store biases. Assume Z sees +1g at rest.
+    dev->ax_bias = (float)(ax_avg / dev->accel_lsb_per_g);
+    dev->ay_bias = (float)(ay_avg / dev->accel_lsb_per_g);
+    dev->az_bias = (float)(az_avg / dev->accel_lsb_per_g - 1.0); // subtract gravity
+
+    dev->gx_bias = (float)(gx_avg / dev->gyro_lsb_per_dps);
+    dev->gy_bias = (float)(gy_avg / dev->gyro_lsb_per_dps);
+    dev->gz_bias = (float)(gz_avg / dev->gyro_lsb_per_dps);
+
+    ESP_LOGI(TAG, "Accel bias (g): ax=%.4f ay=%.4f az=%.4f (g includes gravity offset removed on Z)",
+             dev->ax_bias, dev->ay_bias, dev->az_bias);
+    ESP_LOGI(TAG, "Gyro  bias (dps): gx=%.3f gy=%.3f gz=%.3f",
+             dev->gx_bias, dev->gy_bias, dev->gz_bias);
     return ESP_OK;
 }
 
-void ypr_task_polling(void *arg)
-{
-    // If DMP is enabled elsewhere, consider disabling it first to avoid confusion
-    // (not strictly necessary, since we don’t touch FIFO here).
+// --- Mahony IMU (no magnetometer) ---
+static void mahony_update_imu(mpu6050_t *d,
+                              float gx_dps, float gy_dps, float gz_dps,
+                              float ax_g,  float ay_g,  float az_g,
+                              float dt) {
+    // Convert gyro to rad/s
+    const float DEG2RAD = (float)M_PI / 180.0f;
+    float gx = gx_dps * DEG2RAD;
+    float gy = gy_dps * DEG2RAD;
+    float gz = gz_dps * DEG2RAD;
 
-    // 1) Gyro bias (keep board still!)
-    float gbx=0, gby=0, gbz=0;
-    if (mpu_calibrate_gyro_bias(400, &gbx, &gby, &gbz) != ESP_OK) {
-        ESP_LOGW(TAGMPU, "Gyro bias calibration failed, continuing without bias");
-        gbx = gby = gbz = 0;
+    // Normalize accelerometer
+    float norm = sqrtf(ax_g*ax_g + ay_g*ay_g + az_g*az_g);
+    if (norm > 1e-6f) {
+        ax_g /= norm; ay_g /= norm; az_g /= norm;
+
+        // Estimated gravity from quaternion
+        float q0 = d->q0, q1 = d->q1, q2 = d->q2, q3 = d->q3;
+        float vx = 2.0f*(q1*q3 - q0*q2);
+        float vy = 2.0f*(q0*q1 + q2*q3);
+        float vz = q0*q0 - q1*q1 - q2*q2 + q3*q3;
+
+        // Error is cross product between measured and estimated gravity
+        float ex = (ay_g * vz - az_g * vy);
+        float ey = (az_g * vx - ax_g * vz);
+        float ez = (ax_g * vy - ay_g * vx);
+
+        // Integral + proportional feedback
+        if (d->ki > 0.0f) {
+            d->exInt += ex * d->ki * dt;
+            d->eyInt += ey * d->ki * dt;
+            d->ezInt += ez * d->ki * dt;
+        }
+        gx += d->kp * ex + d->exInt;
+        gy += d->kp * ey + d->eyInt;
+        gz += d->kp * ez + d->ezInt;
     }
-    ESP_LOGI(TAGMPU, "Gyro bias: bx=%.2f by=%.2f bz=%.2f (LSB)", gbx, gby, gbz);
 
-    // 2) Filter state
-    float yaw=0.f, pitch=0.f, roll=0.f;     // degrees
-    const float alpha = 0.98f;              // complementary blend
-    const int   loop_hz = 200;              // loop rate
-    TickType_t period = pdMS_TO_TICKS(1000/loop_hz);
-    if(period == 0){
-        period = 1;
+    // Integrate quaternion rate: qDot = 0.5 * q ⊗ [0, gx, gy, gz]
+    float q0 = d->q0, q1 = d->q1, q2 = d->q2, q3 = d->q3;
+    float halfdt = 0.5f * dt;
+
+    d->q0 += (-q1*gx - q2*gy - q3*gz) * halfdt;
+    d->q1 += ( q0*gx + q2*gz - q3*gy) * halfdt;
+    d->q2 += ( q0*gy - q1*gz + q3*gx) * halfdt;
+    d->q3 += ( q0*gz + q1*gy - q2*gx) * halfdt;
+
+    // Normalize quaternion
+    float qnorm = 1.0f / sqrtf(d->q0*d->q0 + d->q1*d->q1 + d->q2*d->q2 + d->q3*d->q3);
+    d->q0 *= qnorm; d->q1 *= qnorm; d->q2 *= qnorm; d->q3 *= qnorm;
+}
+
+void mpu6050_quat_to_ypr(float q0, float q1, float q2, float q3,
+                         float *yaw_deg, float *pitch_deg, float *roll_deg) {
+    // ZYX Euler (yaw around Z, pitch around Y, roll around X)
+    float sinp = 2.0f * (q0*q2 - q3*q1);
+    if (sinp > 1.0f) sinp = 1.0f;
+    if (sinp < -1.0f) sinp = -1.0f;
+
+    float yaw   = atan2f(2.0f*(q0*q3 + q1*q2), 1.0f - 2.0f*(q2*q2 + q3*q3));
+    float pitch = asinf(sinp);
+    float roll  = atan2f(2.0f*(q0*q1 + q2*q3), 1.0f - 2.0f*(q1*q1 + q2*q2));
+
+    const float RAD2DEG = 180.0f / (float)M_PI;
+    if (yaw_deg)   *yaw_deg   = yaw   * RAD2DEG;
+    if (pitch_deg) *pitch_deg = pitch * RAD2DEG;
+    if (roll_deg)  *roll_deg  = roll  * RAD2DEG;
+}
+
+esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg) {
+    if (!dev) return ESP_ERR_INVALID_ARG;
+
+    int16_t axr, ayr, azr, gxr, gyr, gzr;
+    esp_err_t err = mpu6050_read_raw(dev, &axr, &ayr, &azr, &gxr, &gyr, &gzr);
+    if (err != ESP_OK) return err;
+
+    // Convert to g and dps, apply biases
+    float ax = (axr / dev->accel_lsb_per_g) - dev->ax_bias;
+    float ay = (ayr / dev->accel_lsb_per_g) - dev->ay_bias;
+    float az = (azr / dev->accel_lsb_per_g) - dev->az_bias;
+
+    float gx = (gxr / dev->gyro_lsb_per_dps) - dev->gx_bias;
+    float gy = (gyr / dev->gyro_lsb_per_dps) - dev->gy_bias;
+    float gz = (gzr / dev->gyro_lsb_per_dps) - dev->gz_bias;
+
+    // dt from esp_timer
+    uint64_t now = esp_timer_get_time();
+    float dt = (dev->last_update_us == 0) ? 0.005f : (now - dev->last_update_us) / 1e6f; // seconds
+    if (dt < 1e-6f || dt > 0.1f) dt = 0.005f; // clamp to reasonable
+    dev->last_update_us = now;
+
+    mahony_update_imu(dev, gx, gy, gz, ax, ay, az, dt);
+    mpu6050_quat_to_ypr(dev->q0, dev->q1, dev->q2, dev->q3, yaw_deg, pitch_deg, roll_deg);
+    return ESP_OK;
+}
+
+void mpu6050_reset_filter(mpu6050_t *dev) {
+    if (!dev) return;
+    dev->q0 = 1.0f; dev->q1 = dev->q2 = dev->q3 = 0.0f;
+    dev->exInt = dev->eyInt = dev->ezInt = 0.0f;
+    dev->last_update_us = esp_timer_get_time();
+}
+
+void mpu6050_task(void *pvParameters) {
+    if (pvParameters == NULL) {
+        ESP_LOGE(TAG, "mpu6050_task: NULL pvParameters");
+        vTaskDelete(NULL);
+        return;
     }
-    TickType_t next = xTaskGetTickCount();
 
-    int16_t ax_i, ay_i, az_i, gx_i, gy_i, gz_i;
-    int push_div = 4;   // push YPR every 4 loops => 50 Hz to server
-    int push_cnt = 0;
+    mpu6050_t *imu = (mpu6050_t *)pvParameters;
+
+    TickType_t period = pdMS_TO_TICKS(MPU6050_TASK_PERIOD_MS);
+    if (period == 0) period = 1;  // guard: avoid xTaskDelayUntil assert
+
+    TickType_t last = xTaskGetTickCount();
+    float yaw, pitch, roll;
 
     for (;;) {
-        next += period;
-
-        if (mpu_read_accel_gyro_raw(&ax_i, &ay_i, &az_i, &gx_i, &gy_i, &gz_i) == ESP_OK) {
-            // Convert to physical units
-            float ax = (float)ax_i / ACCEL_SENS_2G;        // g
-            float ay = (float)ay_i / ACCEL_SENS_2G;        // g
-            float az = (float)az_i / ACCEL_SENS_2G;        // g
-
-            float gx = ((float)gx_i - gbx) / GYRO_SENS_250DPS; // deg/s
-            float gy = ((float)gy_i - gby) / GYRO_SENS_250DPS; // deg/s
-            float gz = ((float)gz_i - gbz) / GYRO_SENS_250DPS; // deg/s
-
-            // dt in seconds (from tick period)
-            const float dt = (float)period / 1000.0f; // ms -> s
-
-            // Accel tilt estimate (degrees)
-            // roll = atan2(ay, az); pitch = atan2(-ax, sqrt(ay^2+az^2))
-            float roll_acc  = atan2f(ay, az) * RAD2DEG;
-            float pitch_acc = atan2f(-ax, sqrtf(ay*ay + az*az)) * RAD2DEG;
-
-            // Integrate gyro
-            roll  += gx * dt;
-            pitch += gy * dt;
-            yaw   += gz * dt;   // will drift without magnetometer
-
-            // Complementary blend
-            roll  = alpha * roll  + (1.f - alpha) * roll_acc;
-            pitch = alpha * pitch + (1.f - alpha) * pitch_acc;
-            // yaw: gyro only (you can add magnetometer fusion later)
-
-            if (++push_cnt >= push_div) {
-                push_cnt = 0;
-                float ypr[3] = { yaw, pitch, roll };
-                imu_push_ypr(ypr);
-            }
+        esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll);
+        if (err == ESP_OK) {
+            ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
+        } else {
+            ESP_LOGW(TAG, "update_ypr failed: %s", esp_err_to_name(err));
         }
-
-        // Keep loop timing steady
-        vTaskDelayUntil(&next, period);
+        vTaskDelayUntil(&last, period);
     }
 }
