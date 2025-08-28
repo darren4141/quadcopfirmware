@@ -21,12 +21,12 @@ static float off[3] = {0,0,0};   // zero offsets: yaw,pitch,roll
 static SemaphoreHandle_t ypr_mtx;
 
 // Call this from your DMP polling task when you have a new YPR (radians or degrees—your choice)
-void imu_push_ypr(const float ypr[3]) {
+void imu_push_ypr(const float yaw, const float pitch, const float roll) {
     if (!ypr_mtx) return;
     xSemaphoreTake(ypr_mtx, portMAX_DELAY);
-    ring[ring_head][0] = ypr[0];
-    ring[ring_head][1] = ypr[1];
-    ring[ring_head][2] = ypr[2];
+    ring[ring_head][0] = yaw;
+    ring[ring_head][1] = pitch;
+    ring[ring_head][2] = roll;
     ring_head = (ring_head + 1) % RING_N;
     if (ring_count < RING_N) ring_count++;
     xSemaphoreGive(ypr_mtx);
@@ -163,6 +163,8 @@ void wifi_ap_start(void) {
         .max_connection = 4,
         .authmode = WIFI_AUTH_WPA_WPA2_PSK
     }};
+
+    // IP: 192.168.4.1
     if (strlen((char*)ap.ap.password) == 0) ap.ap.authmode = WIFI_AUTH_OPEN;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
@@ -192,57 +194,57 @@ esp_err_t ws_handler(httpd_req_t *req) {
         // Decode three hex digits into uint8_t values
         key_packet_t pkt = {
             .wasd = (uint8_t)strtol((char[]){f.payload[2],0}, NULL, 16) & 0xF,
-            .tfgh = (uint8_t)strtol((char[]){f.payload[3],0}, NULL, 16) & 0xF,
-            .ijkl = (uint8_t)strtol((char[]){f.payload[4],0}, NULL, 16) & 0xF
+            .tfgh = (uint8_t)strtol((char[]){f.payload[4],0}, NULL, 16) & 0xF,
+            .ijkl = (uint8_t)strtol((char[]){f.payload[3],0}, NULL, 16) & 0xF
         };
 
         if(pkt.wasd & 0x01){ //W pressed
-    
+            ESP_LOGI(TAG, "W pressed");
+
         }
         
         if(pkt.wasd & 0x02){ //A pressed
-            printf("A pressed");
+            ESP_LOGI(TAG, "A pressed");
         }
         
         if(pkt.wasd & 0x04){ //S pressed
-            printf("S pressed");
+            ESP_LOGI(TAG, "S pressed");
         }
         
         if(pkt.wasd & 0x08){ //D pressed
-            printf("D pressed");
+            ESP_LOGI(TAG, "D pressed");
         }
         
         if(pkt.ijkl & 0x01){ //I pressed
-            printf("I pressed");
+            ESP_LOGI(TAG, "I pressed");
         }
         
         if(pkt.ijkl & 0x02){ //J pressed
-            printf("J pressed");
+            ESP_LOGI(TAG, "J pressed");
         }
         
         if(pkt.ijkl & 0x04){ //K pressed
-            printf("K pressed");
+            ESP_LOGI(TAG, "K pressed");
         }
         
         if(pkt.ijkl & 0x08){ //L pressed
-            printf("L pressed");
+            ESP_LOGI(TAG, "L pressed");
         }
         
         if(pkt.tfgh & 0x01){ //T pressed - Zeroing function
-            printf("T pressed");
-            do_zero();
+            ESP_LOGI(TAG, "T pressed");
         }
         
         if(pkt.tfgh & 0x02){ //F pressed
-            printf("F pressed");
+            ESP_LOGI(TAG, "F pressed");
         }
         
         if(pkt.tfgh & 0x04){ //G pressed
-            printf("G pressed");
+            ESP_LOGI(TAG, "G pressed");
         }
         
         if(pkt.tfgh & 0x08){ //H pressed
-            printf("H pressed");
+            ESP_LOGI(TAG, "H pressed");
         }
     }
 

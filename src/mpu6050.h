@@ -13,6 +13,9 @@ extern "C" {
 #define MPU6050_I2C_PORT         I2C_NUM_0
 #endif
 
+#define I2C_SDA 22
+#define I2C_SCL 23
+
 #ifndef MPU6050_I2C_FREQ_HZ
 #define MPU6050_I2C_FREQ_HZ      100000
 #endif
@@ -90,6 +93,8 @@ void mpu6050_quat_to_ypr(float q0, float q1, float q2, float q3,
                          float *yaw_deg, float *pitch_deg, float *roll_deg);
 
 void mpu6050_task(void *pvParameters);
+
+esp_err_t imu_boot(mpu6050_t *imu);
 
 #ifdef __cplusplus
 }

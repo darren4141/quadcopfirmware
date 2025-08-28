@@ -6,7 +6,7 @@
 #define RING_N   20          // samples used for zeroing average
 
 // Push newest YPR sample into server's ring buffer
-void imu_push_ypr(const float ypr[3]);
+void imu_push_ypr(const float yaw, const float pitch, const float roll);
 
 void wifi_ap_start(void);
 

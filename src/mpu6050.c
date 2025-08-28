@@ -6,8 +6,9 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_check.h"
+#include "server.h"
 
-static const char *TAG = "MPU6050";
+static const char *TAGMPU = "MPU6050";
 
 // --- Low-level I2C helpers ---
 static inline esp_err_t i2c_write_reg(i2c_port_t port, uint8_t addr, uint8_t reg, uint8_t val) {
@@ -35,8 +36,8 @@ esp_err_t mpu6050_i2c_init(i2c_port_t port, gpio_num_t sda, gpio_num_t scl, uint
         .master.clk_speed = freq_hz,
         .clk_flags = 0
     };
-    ESP_RETURN_ON_ERROR(i2c_param_config(port, &cfg), TAG, "param_config");
-    ESP_RETURN_ON_ERROR(i2c_driver_install(port, cfg.mode, 0, 0, 0), TAG, "driver_install");
+    ESP_RETURN_ON_ERROR(i2c_param_config(port, &cfg), TAGMPU, "param_config");
+    ESP_RETURN_ON_ERROR(i2c_driver_install(port, cfg.mode, 0, 0, 0), TAGMPU, "driver_install");
     return ESP_OK;
 }
 
@@ -63,19 +64,19 @@ esp_err_t mpu6050_init(mpu6050_t *dev, i2c_port_t port, uint8_t addr) {
     dev->addr = addr ? addr : MPU6050_ADDR_DEFAULT;
 
     // Wake up device
-    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_PWR_MGMT_1, 0x00), TAG, "wake");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_PWR_MGMT_1, 0x00), TAGMPU, "wake");
 
     // Set DLPF = 42Hz (CONFIG=3) for stable sampling
-    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_CONFIG, 3), TAG, "dlpf");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_CONFIG, 3), TAGMPU, "dlpf");
 
     // Gyro ±250 dps
-    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_GYRO_CONFIG, 0<<3), TAG, "gyro");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_GYRO_CONFIG, 0<<3), TAGMPU, "gyro");
 
     // Accel ±2g
-    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_ACCEL_CONFIG, 0<<3), TAG, "accel");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_ACCEL_CONFIG, 0<<3), TAGMPU, "accel");
 
     // Sample rate: with DLPF on, base=1kHz; divider=4 -> 200 Hz
-    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_SMPLRT_DIV, 4), TAG, "smplrt");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(port, dev->addr, MPU6050_REG_SMPLRT_DIV, 4), TAGMPU, "smplrt");
 
     set_scales(dev, 0, 0);
 
@@ -91,10 +92,10 @@ esp_err_t mpu6050_init(mpu6050_t *dev, i2c_port_t port, uint8_t addr) {
 esp_err_t mpu6050_config(mpu6050_t *dev, uint8_t accel_fs_sel, uint8_t gyro_fs_sel,
                          uint8_t dlpf_cfg, uint8_t smplrt_div) {
     if (!dev) return ESP_ERR_INVALID_ARG;
-    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_ACCEL_CONFIG, (accel_fs_sel & 3) << 3), TAG, "acc_cfg");
-    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_GYRO_CONFIG,  (gyro_fs_sel  & 3) << 3), TAG, "gyr_cfg");
-    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_CONFIG,       dlpf_cfg & 7), TAG, "dlpf_cfg");
-    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_SMPLRT_DIV,   smplrt_div), TAG, "sr_div");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_ACCEL_CONFIG, (accel_fs_sel & 3) << 3), TAGMPU, "acc_cfg");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_GYRO_CONFIG,  (gyro_fs_sel  & 3) << 3), TAGMPU, "gyr_cfg");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_CONFIG,       dlpf_cfg & 7), TAGMPU, "dlpf_cfg");
+    ESP_RETURN_ON_ERROR(i2c_write_reg(dev->i2c_port, dev->addr, MPU6050_REG_SMPLRT_DIV,   smplrt_div), TAGMPU, "sr_div");
     set_scales(dev, accel_fs_sel, gyro_fs_sel);
     return ESP_OK;
 }
@@ -122,7 +123,7 @@ esp_err_t mpu6050_read_raw(mpu6050_t *dev,
 
 esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples) {
     if (!dev || samples <= 0) return ESP_ERR_INVALID_ARG;
-    ESP_LOGI(TAG, "Calibrating... keep the sensor still (%d samples)", samples);
+    ESP_LOGI(TAGMPU, "Calibrating... keep the sensor still (%d samples)", samples);
 
     double ax_sum=0, ay_sum=0, az_sum=0;
     double gx_sum=0, gy_sum=0, gz_sum=0;
@@ -154,9 +155,9 @@ esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples) {
     dev->gy_bias = (float)(gy_avg / dev->gyro_lsb_per_dps);
     dev->gz_bias = (float)(gz_avg / dev->gyro_lsb_per_dps);
 
-    ESP_LOGI(TAG, "Accel bias (g): ax=%.4f ay=%.4f az=%.4f (g includes gravity offset removed on Z)",
+    ESP_LOGI(TAGMPU, "Accel bias (g): ax=%.4f ay=%.4f az=%.4f (g includes gravity offset removed on Z)",
              dev->ax_bias, dev->ay_bias, dev->az_bias);
-    ESP_LOGI(TAG, "Gyro  bias (dps): gx=%.3f gy=%.3f gz=%.3f",
+    ESP_LOGI(TAGMPU, "Gyro  bias (dps): gx=%.3f gy=%.3f gz=%.3f",
              dev->gx_bias, dev->gy_bias, dev->gz_bias);
     return ESP_OK;
 }
@@ -266,7 +267,7 @@ void mpu6050_reset_filter(mpu6050_t *dev) {
 
 void mpu6050_task(void *pvParameters) {
     if (pvParameters == NULL) {
-        ESP_LOGE(TAG, "mpu6050_task: NULL pvParameters");
+        ESP_LOGE(TAGMPU, "mpu6050_task: NULL pvParameters");
         vTaskDelete(NULL);
         return;
     }
@@ -282,10 +283,27 @@ void mpu6050_task(void *pvParameters) {
     for (;;) {
         esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll);
         if (err == ESP_OK) {
-            ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
+            // ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
+            imu_push_ypr(yaw, pitch, roll);
         } else {
-            ESP_LOGW(TAG, "update_ypr failed: %s", esp_err_to_name(err));
+            ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
         }
         vTaskDelayUntil(&last, period);
     }
+}
+
+esp_err_t imu_boot(mpu6050_t *imu){
+    ESP_RETURN_ON_ERROR(mpu6050_i2c_init(MPU6050_I2C_PORT, I2C_SDA, I2C_SCL, MPU6050_I2C_FREQ_HZ), TAGMPU, "MPU i2c init");
+    ESP_RETURN_ON_ERROR(mpu6050_init(imu, MPU6050_I2C_PORT, MPU6050_ADDR_DEFAULT), TAGMPU, "MPU init");
+    
+    uint8_t who = 0;
+    ESP_RETURN_ON_ERROR(mpu6050_whoami(imu, &who), TAGMPU, "whoami");
+    ESP_LOGI(TAGMPU, "WHO_AM_I = 0x%02X (expect 0x68)", who);
+
+    imu->kp = 3.0f;   // 2.0–5.0 good for snappy response
+    imu->ki = 0.02f;  // small integral helps gyro bias; set 0.0f if you see drift overshoot
+    
+    ESP_RETURN_ON_ERROR(mpu6050_calibrate(imu, 500), TAGMPU, "calibrate");
+
+    return ESP_OK;
 }
