@@ -6,8 +6,8 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/i2c.h"
-#include "nvs.h"
 
+#include "nvs.h"
 #include "pwm.h"
 #include "mpu6050.h"
 #include "server.h"
@@ -23,6 +23,10 @@ void app_main(void) {
     ESP_ERROR_CHECK(imu_boot(&imu));
     ESP_ERROR_CHECK(server_init());
 
-    TaskHandle_t imu_task = NULL;
-    xTaskCreate(mpu6050_task, "mpu6050_task", 3072, (void *)&imu, 5, &imu_task);
+    TaskHandle_t mpu6050_task_handle = NULL;
+    TaskHandle_t pwm_setter_task_handle = NULL;
+    xTaskCreate(mpu6050_task, "mpu6050_task", 3072, (void *)&imu, 5, &mpu6050_task_handle);
+
+    xTaskCreate(pwm_setter_task, "pwm setter task", 4096, NULL, 4, &pwm_setter_task_handle);
+    
 }

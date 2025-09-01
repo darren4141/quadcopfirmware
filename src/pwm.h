@@ -13,3 +13,14 @@
 #define CH_D2 LEDC_CHANNEL_1
 #define CH_D3 LEDC_CHANNEL_2
 #define CH_D8 LEDC_CHANNEL_3
+
+extern volatile float targetPWMpct;
+extern volatile float currentPWMpct;
+
+void incrementTargetPWMpct(float size);
+
+void setTargetPWMpct(float newTargetPWMpct);
+
+float getTargetPWMpct();
+
+void pwm_setter_task();

@@ -3,6 +3,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pwm.h"
+#include "esp_log.h"
+#include "esp_err.h"
+
+static const char *TAGPWM = "PWM";
+
+volatile float targetPWMpct = -1.0f;
+volatile float currentPWMpct = 0.0f;
 
 static inline uint32_t duty_from_percent(uint32_t pct){
     if (pct > 100) pct = 100;
@@ -11,7 +18,23 @@ static inline uint32_t duty_from_percent(uint32_t pct){
     return (pct * max_duty + 50) / 100;
 }
 
-static void pwm_cycle_task(void *arg){
+void incrementTargetPWMpct(float size){
+    if(size < 0 && size > targetPWMpct){
+        targetPWMpct = 0;
+    }else{
+        targetPWMpct += size;
+    }
+}
+
+void setTargetPWMpct(float newTargetPWMpct){
+    targetPWMpct = newTargetPWMpct;
+}
+
+float getTargetPWMpct(){
+    return targetPWMpct;
+}
+
+void pwm_setter_task(){
     // Configure shared LEDC timer
     ledc_timer_config_t tcfg = {
         .speed_mode       = LEDC_MODE,
@@ -33,17 +56,21 @@ static void pwm_cycle_task(void *arg){
         ESP_ERROR_CHECK(ledc_channel_config(&ch[i]));
     }
 
-    // Duty cycle sequence: 100% -> 50% -> 0%
-    const uint32_t steps_pct[] = {100, 50, 0};
-    const size_t n_steps = sizeof(steps_pct)/sizeof(steps_pct[0]);
-
     // Timing
     TickType_t next = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(STEP_MS);
 
-    size_t idx = 0;
     while (1) {
-        uint32_t duty = duty_from_percent(steps_pct[idx]);
+        if(currentPWMpct == targetPWMpct){
+            vTaskDelayUntil(&next, period);
+            continue;        
+        }
+
+        if(targetPWMpct == -1){
+            targetPWMpct = 0;
+        }
+
+        uint32_t duty = duty_from_percent(targetPWMpct);
 
         // Apply the same duty to all four channels
         ledc_set_duty(LEDC_MODE, CH_D0, duty);
@@ -58,11 +85,13 @@ static void pwm_cycle_task(void *arg){
         ledc_set_duty(LEDC_MODE, CH_D8, duty);
         ledc_update_duty(LEDC_MODE, CH_D8);
 
-        printf("PWM DUTY: %lu\n", steps_pct[idx]);
+        printf("PWM DUTY: %lu\n", duty);
+        ESP_LOGI(TAGPWM, "PWM DUTY: %lu\n", duty);
 
         // Next step
         next += period;
         vTaskDelay(pdMS_TO_TICKS(1000));
-        idx = (idx + 1) % n_steps;
+
+        currentPWMpct = targetPWMpct;
     }
 }

@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "esp_err.h"
 #include "packet.h"
+#include "pwm.h"
 
 // ----------- YPR ring buffer + offsets -----------
 static float ring[RING_N][3];    // [i][0]=yaw, [1]=pitch, [2]=roll
@@ -200,11 +201,12 @@ esp_err_t ws_handler(httpd_req_t *req) {
 
         if(pkt.wasd & 0x01){ //W pressed
             ESP_LOGI(TAG, "W pressed");
-
+            incrementTargetPWMpct(5);
         }
         
         if(pkt.wasd & 0x02){ //A pressed
             ESP_LOGI(TAG, "A pressed");
+            incrementTargetPWMpct(-5);
         }
         
         if(pkt.wasd & 0x04){ //S pressed

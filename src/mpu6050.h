@@ -17,7 +17,7 @@ extern "C" {
 #define I2C_SCL 23
 
 #ifndef MPU6050_I2C_FREQ_HZ
-#define MPU6050_I2C_FREQ_HZ      100000
+#define MPU6050_I2C_FREQ_HZ      50000
 #endif
 
 // Default addresses: AD0 low -> 0x68, AD0 high -> 0x69

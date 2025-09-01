@@ -12,6 +12,9 @@
         "esp_err.h": "c",
         "nvs.h": "c",
         "stdint.h": "c",
-        "gpio.h": "c"
+        "gpio.h": "c",
+        "pwm.h": "c",
+        "mpu6050.h": "c",
+        "server.h": "c"
     }
 }
