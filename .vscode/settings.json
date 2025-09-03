@@ -15,6 +15,11 @@
         "gpio.h": "c",
         "pwm.h": "c",
         "mpu6050.h": "c",
-        "server.h": "c"
+        "server.h": "c",
+        "esp_timer.h": "c",
+        "esp_log.h": "c",
+        "esp_check.h": "c",
+        "string.h": "c",
+        "math.h": "c"
     }
 }
