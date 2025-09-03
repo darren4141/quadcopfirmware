@@ -14,6 +14,11 @@
 #define CH_D3 LEDC_CHANNEL_2
 #define CH_D8 LEDC_CHANNEL_3
 
+#define HOVER_FF 700
+#define ASCEND_PWM 100
+#define DESCEND_PWM -100
+#define ROLL_PWM 25
+
 extern volatile float targetPWMpct;
 extern volatile float currentPWMpct;
 

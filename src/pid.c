@@ -12,7 +12,6 @@ void PIDinitialize(pid_controller controller){
     controller.eI = 0;
 }
 
-
 void setTarget(pid_controller controller, float new_target){
     controller.target = new_target;
 }

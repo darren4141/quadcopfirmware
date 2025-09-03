@@ -5,11 +5,22 @@
 #include "pwm.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "pid.h"
 
 static const char *TAGPWM = "PWM";
 
 volatile float targetPWMpct = -1.0f;
 volatile float currentPWMpct = 0.0f;
+
+/**
+ * 1 -> W       ASCEND
+ * 2 -> S       DESCEND
+ * 3 -> A       ROLL CW
+ * 4 -> D       ROLL CCW
+ * 5 -> I/K     YAW FWD/BWD
+ * 6 -> J/L     PITCH FWD/BWD
+ */
+volatile uint8_t modeSelector = 0;
 
 static inline uint32_t duty_from_percent(uint32_t pct){
     if (pct > 100) pct = 100;
@@ -32,6 +43,23 @@ void setTargetPWMpct(float newTargetPWMpct){
 
 float getTargetPWMpct(){
     return targetPWMpct;
+}
+
+void setLedcWithOffset(float basePWM, float offset0, float offset1, float offset2, float offset3){
+    ledc_set_duty(LEDC_MODE, CH_D0, basePWM + offset0);
+    ledc_update_duty(LEDC_MODE, CH_D0);
+
+    ledc_set_duty(LEDC_MODE, CH_D2, basePWM + offset1);
+    ledc_update_duty(LEDC_MODE, CH_D2);
+
+    ledc_set_duty(LEDC_MODE, CH_D3, basePWM + offset2);
+    ledc_update_duty(LEDC_MODE, CH_D3);
+
+    ledc_set_duty(LEDC_MODE, CH_D8, basePWM + offset3);
+    ledc_update_duty(LEDC_MODE, CH_D8);
+
+    printf("PWM0: %lu | PWM1: %lu | PWM2: %lu | PWM3: %lu\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
+    ESP_LOGI(TAGPWM, "PWM0: %lu | PWM1: %lu | PWM2: %lu | PWM3: %lu\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
 }
 
 void pwm_setter_task(){
@@ -60,7 +88,27 @@ void pwm_setter_task(){
     TickType_t next = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(STEP_MS);
 
+    pid_controller yawAdjustController;
+    pid_controller pitchAdjustController;
+
+    PIDinitialize(yawAdjustController);
+    PIDinitialize(pitchAdjustController);
+
     while (1) {
+        float yawAdjust;
+        float pitchAdjust;
+
+        if(modeSelector <= 4){
+            float currentYaw = 0;
+            setTarget(yawAdjustController, 0);
+            yawAdjust = PIDCalculate(yawAdjustController, currentYaw);
+
+            float currentPitch = 0;
+            setTarget(pitchAdjustController, 0);
+            pitchAdjust = PIDCalculate(pitchAdjustController, currentPitch);
+
+        }
+
         if(currentPWMpct == targetPWMpct){
             vTaskDelayUntil(&next, period);
             continue;        
@@ -70,23 +118,31 @@ void pwm_setter_task(){
             targetPWMpct = 0;
         }
 
-        uint32_t duty = duty_from_percent(targetPWMpct);
-
-        // Apply the same duty to all four channels
-        ledc_set_duty(LEDC_MODE, CH_D0, duty);
-        ledc_update_duty(LEDC_MODE, CH_D0);
-
-        ledc_set_duty(LEDC_MODE, CH_D2, duty);
-        ledc_update_duty(LEDC_MODE, CH_D2);
-
-        ledc_set_duty(LEDC_MODE, CH_D3, duty);
-        ledc_update_duty(LEDC_MODE, CH_D3);
-
-        ledc_set_duty(LEDC_MODE, CH_D8, duty);
-        ledc_update_duty(LEDC_MODE, CH_D8);
-
-        printf("PWM DUTY: %lu\n", duty);
-        ESP_LOGI(TAGPWM, "PWM DUTY: %lu\n", duty);
+        if(modeSelector == 1){
+            setLedcWithOffset(HOVER_FF + ASCEND_PWM, 
+                -yawAdjust + pitchAdjust, 
+                -yawAdjust - pitchAdjust, 
+                yawAdjust + pitchAdjust, 
+                yawAdjust - pitchAdjust);
+        }else if(modeSelector == 2){
+            setLedcWithOffset(HOVER_FF + DESCEND_PWM, 
+                -yawAdjust + pitchAdjust, 
+                -yawAdjust - pitchAdjust, 
+                yawAdjust + pitchAdjust, 
+                yawAdjust - pitchAdjust);
+        }else if(modeSelector == 3){
+            setLedcWithOffset(HOVER_FF, 
+                -yawAdjust + pitchAdjust + ROLL_PWM, 
+                -yawAdjust - pitchAdjust - ROLL_PWM, 
+                yawAdjust + pitchAdjust + ROLL_PWM, 
+                yawAdjust - pitchAdjust - ROLL_PWM); 
+        }else if(modeSelector == 4){
+            setLedcWithOffset(HOVER_FF, 
+                -yawAdjust + pitchAdjust - ROLL_PWM, 
+                -yawAdjust - pitchAdjust + ROLL_PWM, 
+                yawAdjust + pitchAdjust - ROLL_PWM, 
+                yawAdjust - pitchAdjust + ROLL_PWM); 
+        }
 
         // Next step
         next += period;
