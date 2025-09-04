@@ -20,6 +20,10 @@
         "esp_log.h": "c",
         "esp_check.h": "c",
         "string.h": "c",
-        "math.h": "c"
+        "math.h": "c",
+        "ieeefp.h": "c",
+        "reent.h": "c",
+        "cmath": "c",
+        "pid.h": "c"
     }
 }

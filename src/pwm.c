@@ -13,12 +13,16 @@ volatile float targetPWMpct = -1.0f;
 volatile float currentPWMpct = 0.0f;
 
 /**
+ * 0 -> NONE    STABLE
  * 1 -> W       ASCEND
  * 2 -> S       DESCEND
  * 3 -> A       ROLL CW
  * 4 -> D       ROLL CCW
- * 5 -> I/K     YAW FWD/BWD
- * 6 -> J/L     PITCH FWD/BWD
+ * 5 -> I       YAW FWD
+ * 6 -> K       YAW BWD
+ * 6 -> J       PITCH FWD
+ * 8 -> L       PITCH BWD
+ * 9 -> STOP    DEAD STICK
  */
 volatile uint8_t modeSelector = 0;
 
@@ -103,16 +107,40 @@ void pwm_setter_task(){
     while (1) {
         float yawAdjust;
         float pitchAdjust;
+        float currentYaw = 0;   //grab these from mpu6050.h
+        float currentPitch = 0;
 
         if(modeSelector <= 4){
-            float currentYaw = 0;
-            setTarget(yawAdjustController, 0);
+            PID_setTarget(yawAdjustController, 0);
             yawAdjust = PID_calculate(yawAdjustController, currentYaw);
 
-            float currentPitch = 0;
-            setTarget(pitchAdjustController, 0);
+            PID_setTarget(pitchAdjustController, 0);
             pitchAdjust = PID_calculate(pitchAdjustController, currentPitch);
 
+        }
+
+        if(modeSelector == 5 || modeSelector == 6){
+            if(modeSelector == 5){
+                PID_setTarget(yawAdjustController, LAUNCH_ANGLE_DEGREES);
+            }else{
+                PID_setTarget(yawAdjustController, -1 * LAUNCH_ANGLE_DEGREES);
+            }
+            yawAdjust = PID_calculate(yawAdjustController, currentYaw);
+
+            PID_setTarget(pitchAdjustController, 0);
+            pitchAdjust = PID_calculate(pitchAdjustController, currentPitch);
+        }
+
+        if(modeSelector == 7 || modeSelector == 8){
+            PID_setTarget(yawAdjustController, 0);
+            yawAdjust = PID_calculate(yawAdjustController, currentYaw);
+
+            if(modeSelector == 7){
+                PID_setTarget(pitchAdjustController, LAUNCH_ANGLE_DEGREES);
+            }else{
+                PID_setTarget(pitchAdjustController, -1 * LAUNCH_ANGLE_DEGREES);
+            }
+            pitchAdjust = PID_calculate(pitchAdjustController, currentPitch);
         }
 
         if(currentPWMpct == targetPWMpct){
@@ -124,7 +152,13 @@ void pwm_setter_task(){
             targetPWMpct = 0;
         }
 
-        if(modeSelector == 1){
+        if(modeSelector == 0){
+            setLedcWithOffset(HOVER_FF, 
+                -yawAdjust + pitchAdjust, 
+                -yawAdjust - pitchAdjust, 
+                yawAdjust + pitchAdjust, 
+                yawAdjust - pitchAdjust);        
+        }else if(modeSelector == 1){
             setLedcWithOffset(HOVER_FF + ASCEND_PWM, 
                 -yawAdjust + pitchAdjust, 
                 -yawAdjust - pitchAdjust, 
@@ -148,6 +182,20 @@ void pwm_setter_task(){
                 -yawAdjust - pitchAdjust + ROLL_PWM, 
                 yawAdjust + pitchAdjust - ROLL_PWM, 
                 yawAdjust - pitchAdjust + ROLL_PWM); 
+        }else if(modeSelector == 5 || modeSelector == 6){
+            setLedcWithOffset(HOVER_FF / cos(DEG2RAD(currentYaw)), 
+                -yawAdjust + pitchAdjust, 
+                -yawAdjust - pitchAdjust, 
+                yawAdjust + pitchAdjust, 
+                yawAdjust - pitchAdjust);   
+        }else if(modeSelector == 7 || modeSelector == 8){
+            setLedcWithOffset(HOVER_FF / cos(DEG2RAD(currentPitch)), 
+                -yawAdjust + pitchAdjust, 
+                -yawAdjust - pitchAdjust, 
+                yawAdjust + pitchAdjust, 
+                yawAdjust - pitchAdjust);  
+        }else if(modeSelector == 9){
+            setLedcWithOffset(0, 0, 0, 0, 0);
         }
 
         // Next step

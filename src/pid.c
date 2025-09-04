@@ -38,7 +38,7 @@ float PID_Calculate(pid_controller controller, float current){
     float eP = controller.target - current;
 
     //deadband check
-    if(ABS(eP) < controller.eDeadband){
+    if(fabs(eP) < controller.eDeadband){
         return 0;
     }
 
@@ -46,7 +46,7 @@ float PID_Calculate(pid_controller controller, float current){
     float eD = (eP - controller.errorPrevious) / dT;
 
     //check and obey integral bound
-    if((controller.maxI != 0) && ABS(eI) > controller.maxI){
+    if((controller.maxI != 0) && fabs(eI) > controller.maxI){
         if(eI > 0){
             eI = controller.maxI;
         }else{
@@ -58,7 +58,7 @@ float PID_Calculate(pid_controller controller, float current){
     float res = (controller.kP * eP) + (controller.kI * eI) + (controller.kD * eD);
 
     //check and obey upper bound
-    if((controller.upperBound != 0) && ABS(res) > controller.upperBound){
+    if((controller.upperBound != 0) && fabs(res) > controller.upperBound){
         if(res > 0){
             res = controller.upperBound;
         }else{

@@ -3,8 +3,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "math.h"
 
-#define ABS(x) (x > 0) ? x : -1 * x
+#define DEG2RAD(x) x * M_PI / 180.0
 
 typedef struct{
     float kP;
