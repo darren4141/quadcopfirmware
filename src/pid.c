@@ -33,7 +33,7 @@ void PID_setEDeadband(pid_controller controller, float new_eDeadband){
     controller.eDeadband = new_eDeadband;
 }
 
-float PID_Calculate(pid_controller controller, float current){
+float PID_calculate(pid_controller controller, float current){
     float dT = (esp_timer_get_time() - controller.prev_time_us) / 1e6;
     float eP = controller.target - current;
 
