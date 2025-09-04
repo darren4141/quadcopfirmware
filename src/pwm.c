@@ -91,8 +91,14 @@ void pwm_setter_task(){
     pid_controller yawAdjustController;
     pid_controller pitchAdjustController;
 
-    PIDinitialize(yawAdjustController);
-    PIDinitialize(pitchAdjustController);
+    PID_initialize(yawAdjustController);
+    PID_initialize(pitchAdjustController);
+
+    PID_setEDeadband(yawAdjustController, 0.1);
+    PID_setEDeadband(pitchAdjustController, 0.1);
+
+    PID_setUpperBound(yawAdjustController, 100);
+    PID_setUpperBound(pitchAdjustController, 100);
 
     while (1) {
         float yawAdjust;
@@ -101,11 +107,11 @@ void pwm_setter_task(){
         if(modeSelector <= 4){
             float currentYaw = 0;
             setTarget(yawAdjustController, 0);
-            yawAdjust = PIDCalculate(yawAdjustController, currentYaw);
+            yawAdjust = PID_calculate(yawAdjustController, currentYaw);
 
             float currentPitch = 0;
             setTarget(pitchAdjustController, 0);
-            pitchAdjust = PIDCalculate(pitchAdjustController, currentPitch);
+            pitchAdjust = PID_calculate(pitchAdjustController, currentPitch);
 
         }
 

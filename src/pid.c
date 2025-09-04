@@ -7,7 +7,7 @@
 #include "esp_timer.h"
 #include "esp_check.h"
 
-void PIDinitialize(pid_controller controller){
+void PID_initialize(pid_controller controller){
     controller.prev_time_us = esp_timer_get_time();
     controller.eI = 0;
 
@@ -17,23 +17,23 @@ void PIDinitialize(pid_controller controller){
     controller.eDeadband = 0;
 }
 
-void setTarget(pid_controller controller, float new_target){
+void PID_setTarget(pid_controller controller, float new_target){
     controller.target = new_target;
 }
 
-void setUpperBound(pid_controller controller, float new_bound){
+void PID_setUpperBound(pid_controller controller, float new_bound){
     controller.upperBound = new_bound;
 }
 
-void setEIBound(pid_controller controller, float new_maxI){
+void PID_setEIBound(pid_controller controller, float new_maxI){
     controller.maxI = new_maxI;
 }
 
-void setEDeadband(pid_controller controller, float new_eDeadband){
+void PID_setEDeadband(pid_controller controller, float new_eDeadband){
     controller.eDeadband = new_eDeadband;
 }
 
-float PIDCalculate(pid_controller controller, float current){
+float PID_Calculate(pid_controller controller, float current){
     float dT = (esp_timer_get_time() - controller.prev_time_us) / 1e6;
     float eP = controller.target - current;
 
