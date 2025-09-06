@@ -17,6 +17,12 @@ void PID_initialize(pid_controller controller){
     controller.eDeadband = 0;
 }
 
+void PID_setConstants(pid_controller controller, float new_kP, float new_kI, float new_kD){
+    controller.kP = new_kP;
+    controller.kI = new_kI;
+    controller.kD = new_kD;
+}
+
 void PID_setTarget(pid_controller controller, float new_target){
     controller.target = new_target;
 }

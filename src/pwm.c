@@ -101,8 +101,11 @@ void pwm_setter_task(){
     PID_setEDeadband(yawAdjustController, 0.1);
     PID_setEDeadband(pitchAdjustController, 0.1);
 
-    PID_setUpperBound(yawAdjustController, 100);
-    PID_setUpperBound(pitchAdjustController, 100);
+    PID_setUpperBound(yawAdjustController, PID_UPPER_BOUND);
+    PID_setUpperBound(pitchAdjustController, PID_UPPER_BOUND);
+
+    PID_setConstants(yawAdjustController, 4.0, 1.0, 0.1);
+    PID_setConstants(pitchAdjustController, 4.0, 1.0, 0.1);
 
     while (1) {
         float yawAdjust;

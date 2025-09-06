@@ -20,6 +20,7 @@
 #define DESCEND_PWM -100
 #define ROLL_PWM 25
 #define LAUNCH_ANGLE_DEGREES 20.0
+#define PID_UPPER_BOUND 200
 
 extern volatile float targetPWMpct;
 extern volatile float currentPWMpct;

@@ -26,6 +26,8 @@ typedef struct{
 
 void PID_initialize(pid_controller controller);
 
+void PID_setConstants(pid_controller controller, float new_kP, float new_kI, float new_kD);
+
 void PID_setTarget(pid_controller controller, float new_target);
 
 void PID_setUpperBound(pid_controller controller, float new_bound);
