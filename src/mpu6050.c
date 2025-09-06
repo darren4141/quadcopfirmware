@@ -284,7 +284,7 @@ void mpu6050_task(void *pvParameters) {
         esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll);
         if (err == ESP_OK) {
             // ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
-            imu_push_ypr(yaw, pitch, roll);
+            imu_push_ypr_to_server(yaw, pitch, roll);
         } else {
             ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
         }

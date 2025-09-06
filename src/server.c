@@ -22,7 +22,7 @@ static float off[3] = {0,0,0};   // zero offsets: yaw,pitch,roll
 static SemaphoreHandle_t ypr_mtx;
 
 // Call this from your DMP polling task when you have a new YPR (radians or degrees—your choice)
-void imu_push_ypr(const float yaw, const float pitch, const float roll) {
+void imu_push_ypr_to_server(const float yaw, const float pitch, const float roll) {
     if (!ypr_mtx) return;
     xSemaphoreTake(ypr_mtx, portMAX_DELAY);
     ring[ring_head][0] = yaw;
