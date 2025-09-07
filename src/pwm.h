@@ -25,6 +25,15 @@
 extern volatile float targetPWMpct;
 extern volatile float currentPWMpct;
 
+typedef struct{
+    float basePWM;
+    float offset0;
+    float offset1;
+    float offset2;
+    float offset3;
+
+}pwmconfig;
+
 void incrementTargetPWMpct(float size);
 
 void setTargetPWMpct(float newTargetPWMpct);

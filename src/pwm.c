@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "pid.h"
+#include "server.h"
 
 static const char *TAGPWM = "PWM";
 
@@ -49,21 +50,29 @@ float getTargetPWMpct(){
     return targetPWMpct;
 }
 
-void setLedcWithOffset(float basePWM, float offset0, float offset1, float offset2, float offset3){
-    ledc_set_duty(LEDC_MODE, CH_D0, basePWM + offset0);
+void setLedcWithOffset(pwmconfig *config){
+    ledc_set_duty(LEDC_MODE, CH_D0, config->basePWM + config->offset0);
     ledc_update_duty(LEDC_MODE, CH_D0);
-
-    ledc_set_duty(LEDC_MODE, CH_D2, basePWM + offset1);
+    
+    ledc_set_duty(LEDC_MODE, CH_D2, config->basePWM + config->offset1);
     ledc_update_duty(LEDC_MODE, CH_D2);
-
-    ledc_set_duty(LEDC_MODE, CH_D3, basePWM + offset2);
+    
+    ledc_set_duty(LEDC_MODE, CH_D3, config->basePWM + config->offset2);
     ledc_update_duty(LEDC_MODE, CH_D3);
-
-    ledc_set_duty(LEDC_MODE, CH_D8, basePWM + offset3);
+    
+    ledc_set_duty(LEDC_MODE, CH_D8, config->basePWM + config->offset3);
     ledc_update_duty(LEDC_MODE, CH_D8);
 
-    printf("PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
-    ESP_LOGI(TAGPWM, "PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
+    printf("PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", config->basePWM + config->offset0, config->basePWM + config->offset1, config->basePWM + config->offset2, config->basePWM + config->offset3);
+    ESP_LOGI(TAGPWM, "PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", config->basePWM + config->offset0, config->basePWM + config->offset1, config->basePWM + config->offset2, config->basePWM + config->offset3);
+}
+
+void setConfigVals(pwmconfig *config, float basePWM, float offset0, float offset1, float offset2, float offset3){
+    config->basePWM = basePWM;
+    config->offset0 = offset0;
+    config->offset1 = offset1;
+    config->offset2 = offset2;
+    config->offset3 = offset3;
 }
 
 void pwm_setter_task(){
@@ -113,6 +122,8 @@ void pwm_setter_task(){
         float currentYaw = 0;   //grab these from mpu6050.h
         float currentPitch = 0;
 
+        pwmconfig current_config;
+
         if(modeSelector <= 4){
             PID_setTarget(&yawAdjustController, 0);
             yawAdjust = PID_calculate(&yawAdjustController, currentYaw);
@@ -156,56 +167,72 @@ void pwm_setter_task(){
         }
 
         if(modeSelector == 0){
-            setLedcWithOffset(HOVER_FF, 
+            setConfigVals(&current_config,
+                HOVER_FF, 
                 -yawAdjust + pitchAdjust, 
                 -yawAdjust - pitchAdjust, 
                 yawAdjust + pitchAdjust, 
                 yawAdjust - pitchAdjust);        
         }else if(modeSelector == 1){
-            setLedcWithOffset(HOVER_FF + ASCEND_PWM, 
+            setConfigVals(&current_config,
+                HOVER_FF + ASCEND_PWM, 
                 -yawAdjust + pitchAdjust, 
                 -yawAdjust - pitchAdjust, 
                 yawAdjust + pitchAdjust, 
                 yawAdjust - pitchAdjust);
         }else if(modeSelector == 2){
-            setLedcWithOffset(HOVER_FF + DESCEND_PWM, 
+            setConfigVals(&current_config,
+                HOVER_FF + DESCEND_PWM, 
                 -yawAdjust + pitchAdjust, 
                 -yawAdjust - pitchAdjust, 
                 yawAdjust + pitchAdjust, 
                 yawAdjust - pitchAdjust);
         }else if(modeSelector == 3){
-            setLedcWithOffset(HOVER_FF, 
+            setConfigVals(&current_config,
+                HOVER_FF, 
                 -yawAdjust + pitchAdjust + ROLL_PWM, 
                 -yawAdjust - pitchAdjust - ROLL_PWM, 
                 yawAdjust + pitchAdjust + ROLL_PWM, 
                 yawAdjust - pitchAdjust - ROLL_PWM); 
         }else if(modeSelector == 4){
-            setLedcWithOffset(HOVER_FF, 
+            setConfigVals(&current_config,
+                HOVER_FF, 
                 -yawAdjust + pitchAdjust - ROLL_PWM, 
                 -yawAdjust - pitchAdjust + ROLL_PWM, 
                 yawAdjust + pitchAdjust - ROLL_PWM, 
                 yawAdjust - pitchAdjust + ROLL_PWM); 
         }else if(modeSelector == 5 || modeSelector == 6){
-            setLedcWithOffset(HOVER_FF / cos(DEG2RAD(currentYaw)), 
+            setConfigVals(&current_config,
+                HOVER_FF / cos(DEG2RAD(currentYaw)), 
                 -yawAdjust + pitchAdjust, 
                 -yawAdjust - pitchAdjust, 
                 yawAdjust + pitchAdjust, 
                 yawAdjust - pitchAdjust);   
         }else if(modeSelector == 7 || modeSelector == 8){
-            setLedcWithOffset(HOVER_FF / cos(DEG2RAD(currentPitch)), 
+            setConfigVals(&current_config,
+                HOVER_FF / cos(DEG2RAD(currentPitch)), 
                 -yawAdjust + pitchAdjust, 
                 -yawAdjust - pitchAdjust, 
                 yawAdjust + pitchAdjust, 
                 yawAdjust - pitchAdjust);  
         }else if(modeSelector == 9){
-            setLedcWithOffset(0, 0, 0, 0, 0);
+            setConfigVals(&current_config, 0, 0, 0, 0, 0);
         }
 
+        setLedcWithOffset(&current_config);
+        
         // Next step
         next += period;
         vTaskDelay(pdMS_TO_TICKS(1000));
 
+        pwm_push_to_server(
+            (int)(current_config.basePWM + current_config.offset0), 
+            (int)(current_config.basePWM + current_config.offset1), 
+            (int)(current_config.basePWM + current_config.offset2), 
+            (int)(current_config.basePWM + current_config.offset3)    
+        );
+
         currentPWMpct = targetPWMpct;
-        
+
     }
 }

@@ -8,6 +8,8 @@
 // Push newest YPR sample into server's ring buffer
 void imu_push_ypr_to_server(const float yaw, const float pitch, const float roll);
 
+void pwm_push_to_server(const int m1, const int m2, const int m3, const int m4);
+
 void wifi_ap_start(void);
 
 esp_err_t server_init(void);
