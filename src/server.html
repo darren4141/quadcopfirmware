@@ -20,7 +20,7 @@
     <h2>Yaw/Pitch/Roll + Keys + PWM</h2>
     <p>Press <b>WASD</b>, <b>IJKL</b>, <b>TFGH</b> to send packets. Press <b>T</b> to ZERO (avg last 20).</p>
     <div class=v id=ypr>yaw=0 pitch=0 roll=0</div>
-    <div class=v id=pwm>mot1=0 mot2=0 mot3=0 mot4=0</div>
+    <div class=v id=pwm>mot1=0 mot2=0 mot3=0 mot4=0 mode=100</div>
     <div class=v id=state></div>
 
 
@@ -98,7 +98,7 @@
             .then(j =>{
                 const el = document.getElementById('pwm');
                 if (j && Number.isFinite(j.mot1) && Number.isFinite(j.mot2) && Number.isFinite(j.mot3) && Number.isFinite(j.mot4)) {
-                    el.textContent = `mot1=${j.mot1.toFixed(2)} mot2=${j.mot2.toFixed(2)} mot3=${j.mot3.toFixed(2)} mot4=${j.mot4.toFixed(2)}`;
+                    el.textContent = `mot1=${j.mot1.toFixed(2)} mot2=${j.mot2.toFixed(2)} mot3=${j.mot3.toFixed(2)} mot4=${j.mot4.toFixed(2)} mode=${j.mode}`;
                 } else {
                     el.textContent = 'no data yet…';
                 }

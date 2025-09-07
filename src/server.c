@@ -20,7 +20,7 @@ static float ring[RING_N][3];    // [i][0]=yaw, [1]=pitch, [2]=roll
 static int   ring_head = 0;
 static int   ring_count = 0;
 static float off[3] = {0,0,0};   // zero offsets: yaw,pitch,roll
-static int pwm_cur[4]  = {0,0,0,0};
+static int pwm_cur[5]  = {0,0,0,0,0};
 static SemaphoreHandle_t ypr_mtx;
 static SemaphoreHandle_t pwm_mtx;
 
@@ -36,10 +36,14 @@ void imu_push_ypr_to_server(const float yaw, const float pitch, const float roll
     xSemaphoreGive(ypr_mtx);
 }
 
-void pwm_push_to_server(const int m1, const int m2, const int m3, const int m4){
+void pwm_push_to_server(const int m1, const int m2, const int m3, const int m4, const int mode){
     if (!pwm_mtx) return;
     xSemaphoreTake(pwm_mtx, portMAX_DELAY);
-    pwm_cur[0]=m1; pwm_cur[1]=m2; pwm_cur[2]=m3; pwm_cur[3]=m4;
+    pwm_cur[0] = m1; 
+    pwm_cur[1] = m2; 
+    pwm_cur[2] = m3; 
+    pwm_cur[3] = m4;
+    pwm_cur[4] = mode;
     xSemaphoreGive(pwm_mtx);
 }
 
@@ -119,20 +123,19 @@ static esp_err_t pwm_json(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Pragma", "no-cache");
 
-    int c[4];
+    int c[5];
     if (!pwm_mtx) return httpd_resp_sendstr(req, "{\"err\":\"uninit\"}");
 
     xSemaphoreTake(pwm_mtx, portMAX_DELAY);
-    for (int i=0;i<4;i++){ 
-        c[i]=pwm_cur[i];
+    for (int i = 0; i < 5; i++){ 
+        c[i] = pwm_cur[i];
     }
     xSemaphoreGive(pwm_mtx);
 
     char buf[160];
-    // Send both current and target arrays. Adjust names/format as you like.
     int n = snprintf(buf, sizeof(buf),
-                     "{\"cur\":[%d,%d,%d,%d]}",
-                     c[0],c[1],c[2],c[3]);
+                    "{\"mot1\":%d,\"mot2\":%d,\"mot3\":%d,\"mot4\":%d,\"mode\":%d}",
+                    c[0], c[1], c[2], c[3], c[4]);
     return httpd_resp_send(req, buf, n);
 }
 
@@ -184,7 +187,7 @@ esp_err_t ws_handler(httpd_req_t *req) {
     if (!f.payload) return ESP_ERR_NO_MEM;
     ESP_ERROR_CHECK(httpd_ws_recv_frame(req, &f, f.len));
     f.payload[f.len] = 0;
-
+    
     if (f.len >= 5 && f.payload[0]=='P' && f.payload[1]==':') {
         // Decode three hex digits into uint8_t values
         key_packet_t pkt = {
@@ -193,38 +196,49 @@ esp_err_t ws_handler(httpd_req_t *req) {
             .ijkl = (uint8_t)strtol((char[]){f.payload[3],0}, NULL, 16) & 0xF
         };
 
+        if((pkt.wasd & 0x00) && (pkt.ijkl & 0x00)){
+            ESP_LOGI(TAG, "wasd and ijkl empty, hovering");
+            setMode(0);
+        }
+
         if(pkt.wasd & 0x01){ //W pressed
             ESP_LOGI(TAG, "W pressed");
-            incrementTargetPWMpct(5);
+            setMode(1);
         }
         
         if(pkt.wasd & 0x02){ //A pressed
             ESP_LOGI(TAG, "A pressed");
-            incrementTargetPWMpct(-5);
+            setMode(3);
         }
         
         if(pkt.wasd & 0x04){ //S pressed
             ESP_LOGI(TAG, "S pressed");
+            setMode(2);
         }
         
         if(pkt.wasd & 0x08){ //D pressed
             ESP_LOGI(TAG, "D pressed");
+            setMode(4);
         }
         
         if(pkt.ijkl & 0x01){ //I pressed
             ESP_LOGI(TAG, "I pressed");
+            setMode(5);
         }
         
         if(pkt.ijkl & 0x02){ //J pressed
             ESP_LOGI(TAG, "J pressed");
+            setMode(7);
         }
         
         if(pkt.ijkl & 0x04){ //K pressed
             ESP_LOGI(TAG, "K pressed");
+            setMode(6);
         }
         
         if(pkt.ijkl & 0x08){ //L pressed
             ESP_LOGI(TAG, "L pressed");
+            setMode(8);
         }
         
         if(pkt.tfgh & 0x01){ //T pressed - Zeroing function

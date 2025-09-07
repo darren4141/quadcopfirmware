@@ -13,6 +13,9 @@ static const char *TAGPWM = "PWM";
 volatile float targetPWMpct = -1.0f;
 volatile float currentPWMpct = 0.0f;
 
+volatile float currentYaw = 0;
+volatile float currentPitch = 0;
+
 /**
  * 0 -> NONE    STABLE
  * 1 -> W       ASCEND
@@ -21,11 +24,21 @@ volatile float currentPWMpct = 0.0f;
  * 4 -> D       ROLL CCW
  * 5 -> I       YAW FWD
  * 6 -> K       YAW BWD
- * 6 -> J       PITCH FWD
+ * 7 -> J       PITCH FWD
  * 8 -> L       PITCH BWD
  * 9 -> STOP    DEAD STICK
  */
 volatile uint8_t modeSelector = 0;
+
+void update_yp_for_pwm(float new_yaw, float new_pitch){
+    currentYaw = new_yaw;
+    currentPitch = new_pitch;
+}
+
+void setMode(const uint8_t mode){
+    modeSelector = mode;
+    ESP_LOGI(TAGPWM, "setting mode to %u", modeSelector);
+}
 
 static inline uint32_t duty_from_percent(uint32_t pct){
     if (pct > 100) pct = 100;
@@ -119,8 +132,6 @@ void pwm_setter_task(){
     while (1) {
         float yawAdjust = 0.0f;
         float pitchAdjust = 0.0f;
-        float currentYaw = 0;   //grab these from mpu6050.h
-        float currentPitch = 0;
 
         pwmconfig current_config;
 
@@ -155,15 +166,6 @@ void pwm_setter_task(){
                 PID_setTarget(&pitchAdjustController, -1 * LAUNCH_ANGLE_DEGREES);
             }
             pitchAdjust = PID_calculate(&pitchAdjustController, currentPitch);
-        }
-
-        if(currentPWMpct == targetPWMpct){
-            vTaskDelayUntil(&next, period);
-            continue;        
-        }
-
-        if(targetPWMpct == -1){
-            targetPWMpct = 0;
         }
 
         if(modeSelector == 0){
@@ -221,16 +223,17 @@ void pwm_setter_task(){
 
         setLedcWithOffset(&current_config);
         
-        // Next step
-        next += period;
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
         pwm_push_to_server(
             (int)(current_config.basePWM + current_config.offset0), 
             (int)(current_config.basePWM + current_config.offset1), 
             (int)(current_config.basePWM + current_config.offset2), 
-            (int)(current_config.basePWM + current_config.offset3)    
+            (int)(current_config.basePWM + current_config.offset3),
+            modeSelector    
         );
+
+        // Next step
+        next += period;
+        vTaskDelay(pdMS_TO_TICKS(1000));
 
         currentPWMpct = targetPWMpct;
 

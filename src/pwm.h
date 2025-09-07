@@ -25,6 +25,8 @@
 extern volatile float targetPWMpct;
 extern volatile float currentPWMpct;
 
+extern volatile uint8_t modeSelector;
+
 typedef struct{
     float basePWM;
     float offset0;
@@ -33,6 +35,10 @@ typedef struct{
     float offset3;
 
 }pwmconfig;
+
+void setMode(const uint8_t mode);
+
+void update_yp_for_pwm(float new_yaw, float new_pitch);
 
 void incrementTargetPWMpct(float size);
 

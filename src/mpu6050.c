@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "esp_check.h"
 #include "server.h"
+#include "pwm.h"
 
 static const char *TAGMPU = "MPU6050";
 
@@ -285,6 +286,8 @@ void mpu6050_task(void *pvParameters) {
         if (err == ESP_OK) {
             // ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
             imu_push_ypr_to_server(yaw, pitch, roll);
+            update_yp_for_pwm(yaw, pitch);
+
         } else {
             ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
         }
