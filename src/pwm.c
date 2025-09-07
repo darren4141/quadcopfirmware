@@ -62,8 +62,8 @@ void setLedcWithOffset(float basePWM, float offset0, float offset1, float offset
     ledc_set_duty(LEDC_MODE, CH_D8, basePWM + offset3);
     ledc_update_duty(LEDC_MODE, CH_D8);
 
-    printf("PWM0: %lu | PWM1: %lu | PWM2: %lu | PWM3: %lu\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
-    ESP_LOGI(TAGPWM, "PWM0: %lu | PWM1: %lu | PWM2: %lu | PWM3: %lu\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
+    printf("PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
+    ESP_LOGI(TAGPWM, "PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", basePWM + offset0, basePWM + offset1, basePWM + offset2, basePWM + offset3);
 }
 
 void pwm_setter_task(){
@@ -95,55 +95,55 @@ void pwm_setter_task(){
     pid_controller yawAdjustController;
     pid_controller pitchAdjustController;
 
-    PID_initialize(yawAdjustController);
-    PID_initialize(pitchAdjustController);
+    PID_initialize(&yawAdjustController);
+    PID_initialize(&pitchAdjustController);
 
-    PID_setEDeadband(yawAdjustController, 0.1);
-    PID_setEDeadband(pitchAdjustController, 0.1);
+    PID_setEDeadband(&yawAdjustController, 0.1);
+    PID_setEDeadband(&pitchAdjustController, 0.1);
 
-    PID_setUpperBound(yawAdjustController, PID_UPPER_BOUND);
-    PID_setUpperBound(pitchAdjustController, PID_UPPER_BOUND);
+    PID_setUpperBound(&yawAdjustController, PID_UPPER_BOUND);
+    PID_setUpperBound(&pitchAdjustController, PID_UPPER_BOUND);
 
-    PID_setConstants(yawAdjustController, 4.0, 1.0, 0.1);
-    PID_setConstants(pitchAdjustController, 4.0, 1.0, 0.1);
+    PID_setConstants(&yawAdjustController, 4.0, 1.0, 0.1);
+    PID_setConstants(&pitchAdjustController, 4.0, 1.0, 0.1);
 
     while (1) {
-        float yawAdjust;
-        float pitchAdjust;
+        float yawAdjust = 0.0f;
+        float pitchAdjust = 0.0f;
         float currentYaw = 0;   //grab these from mpu6050.h
         float currentPitch = 0;
 
         if(modeSelector <= 4){
-            PID_setTarget(yawAdjustController, 0);
-            yawAdjust = PID_calculate(yawAdjustController, currentYaw);
+            PID_setTarget(&yawAdjustController, 0);
+            yawAdjust = PID_calculate(&yawAdjustController, currentYaw);
 
-            PID_setTarget(pitchAdjustController, 0);
-            pitchAdjust = PID_calculate(pitchAdjustController, currentPitch);
+            PID_setTarget(&pitchAdjustController, 0);
+            pitchAdjust = PID_calculate(&pitchAdjustController, currentPitch);
 
         }
 
         if(modeSelector == 5 || modeSelector == 6){
             if(modeSelector == 5){
-                PID_setTarget(yawAdjustController, LAUNCH_ANGLE_DEGREES);
+                PID_setTarget(&yawAdjustController, LAUNCH_ANGLE_DEGREES);
             }else{
-                PID_setTarget(yawAdjustController, -1 * LAUNCH_ANGLE_DEGREES);
+                PID_setTarget(&yawAdjustController, -1 * LAUNCH_ANGLE_DEGREES);
             }
-            yawAdjust = PID_calculate(yawAdjustController, currentYaw);
+            yawAdjust = PID_calculate(&yawAdjustController, currentYaw);
 
-            PID_setTarget(pitchAdjustController, 0);
-            pitchAdjust = PID_calculate(pitchAdjustController, currentPitch);
+            PID_setTarget(&pitchAdjustController, 0);
+            pitchAdjust = PID_calculate(&pitchAdjustController, currentPitch);
         }
 
         if(modeSelector == 7 || modeSelector == 8){
-            PID_setTarget(yawAdjustController, 0);
-            yawAdjust = PID_calculate(yawAdjustController, currentYaw);
+            PID_setTarget(&yawAdjustController, 0);
+            yawAdjust = PID_calculate(&yawAdjustController, currentYaw);
 
             if(modeSelector == 7){
-                PID_setTarget(pitchAdjustController, LAUNCH_ANGLE_DEGREES);
+                PID_setTarget(&pitchAdjustController, LAUNCH_ANGLE_DEGREES);
             }else{
-                PID_setTarget(pitchAdjustController, -1 * LAUNCH_ANGLE_DEGREES);
+                PID_setTarget(&pitchAdjustController, -1 * LAUNCH_ANGLE_DEGREES);
             }
-            pitchAdjust = PID_calculate(pitchAdjustController, currentPitch);
+            pitchAdjust = PID_calculate(&pitchAdjustController, currentPitch);
         }
 
         if(currentPWMpct == targetPWMpct){
@@ -206,5 +206,6 @@ void pwm_setter_task(){
         vTaskDelay(pdMS_TO_TICKS(1000));
 
         currentPWMpct = targetPWMpct;
+        
     }
 }

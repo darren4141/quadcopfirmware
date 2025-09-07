@@ -13,13 +13,16 @@
 #include "esp_err.h"
 #include "packet.h"
 #include "pwm.h"
+#include "server_html.h"
 
 // ----------- YPR ring buffer + offsets -----------
 static float ring[RING_N][3];    // [i][0]=yaw, [1]=pitch, [2]=roll
 static int   ring_head = 0;
 static int   ring_count = 0;
 static float off[3] = {0,0,0};   // zero offsets: yaw,pitch,roll
+static int pwm_cur[4]  = {0,0,0,0};
 static SemaphoreHandle_t ypr_mtx;
+static SemaphoreHandle_t pwm_mtx;
 
 // Call this from your DMP polling task when you have a new YPR (radians or degrees—your choice)
 void imu_push_ypr_to_server(const float yaw, const float pitch, const float roll) {
@@ -31,6 +34,13 @@ void imu_push_ypr_to_server(const float yaw, const float pitch, const float roll
     ring_head = (ring_head + 1) % RING_N;
     if (ring_count < RING_N) ring_count++;
     xSemaphoreGive(ypr_mtx);
+}
+
+void pwm_push_to_server(int m1, int m2, int m3, int m4) {
+    if (!pwm_mtx) return;
+    xSemaphoreTake(pwm_mtx, portMAX_DELAY);
+    pwm_cur[0]=m1; pwm_cur[1]=m2; pwm_cur[2]=m3; pwm_cur[3]=m4;
+    xSemaphoreGive(pwm_mtx);
 }
 
 // Average last N samples (clamped to available)
@@ -83,45 +93,7 @@ static int latest_zeroed(float z[3]) {
 // ---------------- HTTP handlers ----------------
 static esp_err_t root_get(httpd_req_t *req) {
     // Minimal page: shows YPR and listens for keys; T triggers zero.
-    const char *html =
-        "<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
-        "<title>ESP32-C6 YPR</title>"
-        "<style>body{font-family:system-ui;margin:16px}.v{font-family:monospace}</style>"
-        "</head><body>"
-        "<h2>Yaw/Pitch/Roll + Keys</h2>"
-        "<p>Press <b>WASD</b>, <b>IJKL</b>, <b>TFGH</b> to send packets. Press <b>T</b> to ZERO (avg last 20).</p>"
-        "<div class=v id=ypr>yaw=0 pitch=0 roll=0</div>"
-        "<div class=v id=state></div>"
-        "<script>"
-        "let ws; let wasd=0, ijkl=0, tfgh=0; let sentZero=false;"
-        "const keyBit={'w':['wasd',0],'a':['wasd',1],'s':['wasd',2],'d':['wasd',3],"
-                      "'i':['ijkl',0],'j':['ijkl',1],'k':['ijkl',2],'l':['ijkl',3],"
-                      "'t':['tfgh',0],'f':['tfgh',1],'g':['tfgh',2],'h':['tfgh',3]};"
-        "function hx(n){return n.toString(16).toUpperCase();}"
-        "function pkt(){return `P:${hx(wasd)}${hx(ijkl)}${hx(tfgh)}`;}"
-        "function send(){ if(ws&&ws.readyState===1) ws.send(pkt()); }"
-        "function up(){document.getElementById('state').textContent=`WASD=0x${hx(wasd)} IJKL=0x${hx(ijkl)} TFGH=0x${hx(tfgh)}`;}"
-        "addEventListener('keydown',e=>{const k=e.key.toLowerCase(); if(k==='t'&&!sentZero){sentZero=true;zero();}"
-        " if(keyBit[k]){let s=keyBit[k][0],b=keyBit[k][1]; if(s==='wasd')wasd|=(1<<b); else if(s==='ijkl')ijkl|=(1<<b); else tfgh|=(1<<b); send(); up(); }});"
-        "addEventListener('keyup',e=>{const k=e.key.toLowerCase(); if(k==='t')sentZero=false;"
-        " if(keyBit[k]){let s=keyBit[k][0],b=keyBit[k][1]; if(s==='wasd')wasd&=~(1<<b); else if(s==='ijkl')ijkl&=~(1<<b); else tfgh&=~(1<<b); send(); up(); }});"
-        "function connect(){const proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(`${proto}://${location.host}/ws`);ws.onclose=()=>setTimeout(connect,1000);} connect();"
-        "setInterval(()=>{"
-        "  fetch('/imu.json?ts='+Date.now(), {cache:'no-store'})"
-        "    .then(r=>r.json())"
-        "    .then(j=>{"
-        "      const el = document.getElementById('ypr');"
-        "      if (j && Number.isFinite(j.yaw) && Number.isFinite(j.pitch) && Number.isFinite(j.roll)) {"
-        "        el.textContent = `yaw=${j.yaw.toFixed(2)} pitch=${j.pitch.toFixed(2)} roll=${j.roll.toFixed(2)}`;"
-        "      } else {"
-        "        el.textContent = 'no data yet…';"
-        "      }"
-        "    })"
-        "    .catch(()=>{"
-        "      document.getElementById('ypr').textContent = 'fetch failed…';"
-        "    });"
-        "}, 100);"
-        "</script></body></html>";
+    const char *html = server_html;
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
 }
@@ -140,6 +112,28 @@ static esp_err_t imu_json(httpd_req_t *req) {
     } else {
         return httpd_resp_sendstr(req, "{\"err\":\"no data\"}");
     }
+}
+
+static esp_err_t pwm_json(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
+
+    int c[4];
+    if (!pwm_mtx) return httpd_resp_sendstr(req, "{\"err\":\"uninit\"}");
+
+    xSemaphoreTake(pwm_mtx, portMAX_DELAY);
+    for (int i=0;i<4;i++){ 
+        c[i]=pwm_cur[i];
+    }
+    xSemaphoreGive(pwm_mtx);
+
+    char buf[160];
+    // Send both current and target arrays. Adjust names/format as you like.
+    int n = snprintf(buf, sizeof(buf),
+                     "{\"cur\":[%d,%d,%d,%d]}",
+                     c[0],c[1],c[2],c[3]);
+    return httpd_resp_send(req, buf, n);
 }
 
 static esp_err_t zero_post(httpd_req_t *req) {
@@ -275,6 +269,12 @@ esp_err_t server_init(void) {
         return ESP_ERR_NO_MEM;
     }
 
+    pwm_mtx = xSemaphoreCreateMutex();
+    if (!pwm_mtx) {
+        ESP_LOGE(TAG, "Failed to create pwm_mtx mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     // --------- Wi-Fi Access Point ---------
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -311,6 +311,9 @@ esp_err_t server_init(void) {
 
     httpd_uri_t imu = { .uri="/imu.json", .method=HTTP_GET, .handler=imu_json, .user_ctx=NULL };
     httpd_register_uri_handler(srv, &imu);
+
+    httpd_uri_t pwm = { .uri="/pwm.json", .method=HTTP_GET, .handler=pwm_json, .user_ctx=NULL };
+    httpd_register_uri_handler(srv, &pwm);
 
     httpd_uri_t zero = { .uri="/zero", .method=HTTP_POST, .handler=zero_post, .user_ctx=NULL };
     httpd_register_uri_handler(srv, &zero);

@@ -24,16 +24,16 @@ typedef struct{
     uint64_t prev_time_us;
 }pid_controller;
 
-void PID_initialize(pid_controller controller);
+void PID_initialize(pid_controller *controller);
 
-void PID_setConstants(pid_controller controller, float new_kP, float new_kI, float new_kD);
+void PID_setConstants(pid_controller *controller, float new_kP, float new_kI, float new_kD);
 
-void PID_setTarget(pid_controller controller, float new_target);
+void PID_setTarget(pid_controller *controller, float new_target);
 
-void PID_setUpperBound(pid_controller controller, float new_bound);
+void PID_setUpperBound(pid_controller *controller, float new_bound);
 
-void PID_setEIBound(pid_controller controller, float new_maxI);
+void PID_setEIBound(pid_controller *controller, float new_maxI);
 
-void PID_setEDeadband(pid_controller controller, float new_eDeadband);
+void PID_setEDeadband(pid_controller *controller, float new_eDeadband);
 
-float PID_calculate(pid_controller controller, float current);
+float PID_calculate(pid_controller *controller, float current);
