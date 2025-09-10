@@ -32,7 +32,7 @@ extern "C" {
 #define MPU6050_REG_ACCEL_XOUT_H 0x3B
 #define MPU6050_REG_WHO_AM_I     0x75
 
-#define MPU6050_TASK_PERIOD_MS 10   // ~100 Hz
+#define MPU_TASK_FREQ_MS 10
 
 typedef struct {
     i2c_port_t i2c_port;

@@ -168,7 +168,7 @@ void log_output_task(void *arg){
                 if(log_type[i] == 0){
                     data_write_size = snprintf(line + offset, sizeof(line) - offset, "| %.2f", log_val_f[i][j]);
                 }else if(log_type[i] == 1){
-                    data_write_size = snprintf(line + offset, sizeof(line) - offset, "| %d", log_val_f[i][j]);
+                    data_write_size = snprintf(line + offset, sizeof(line) - offset, "| %d", log_val_i[i][j]);
                 }
                 
                 if(data_write_size < 0 || data_write_size >= (int)sizeof(line) - offset){

@@ -276,9 +276,6 @@ void mpu6050_task(void *pvParameters) {
 
     mpu6050_t *imu = (mpu6050_t *)pvParameters;
 
-    TickType_t period = pdMS_TO_TICKS(MPU6050_TASK_PERIOD_MS);
-    if (period == 0) period = 1;  // guard: avoid xTaskDelayUntil assert
-
     TickType_t last = xTaskGetTickCount();
     float yaw, pitch, roll;
 
@@ -298,7 +295,7 @@ void mpu6050_task(void *pvParameters) {
         } else {
             // ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
         }
-        vTaskDelayUntil(&last, period);
+        vTaskDelay(pdMS_TO_TICKS(MPU_TASK_FREQ_MS));
     }
 }
 
