@@ -8,6 +8,7 @@
 #include "esp_check.h"
 #include "server.h"
 #include "pwm.h"
+#include "log.h"
 
 static const char *TAGMPU = "MPU6050";
 
@@ -281,15 +282,21 @@ void mpu6050_task(void *pvParameters) {
     TickType_t last = xTaskGetTickCount();
     float yaw, pitch, roll;
 
-    for (;;) {
+    log_add_element("YPR", NULL, 3, 1);
+
+    while(1) {
         esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll);
         if (err == ESP_OK) {
             // ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
             imu_push_ypr_to_server(yaw, pitch, roll);
             update_yp_for_pwm(yaw, pitch);
-
+            float ypr[3];
+            ypr[0] = yaw;
+            ypr[1] = pitch;
+            ypr[2] = roll;
+            log_update_vals(1, ypr, 3);
         } else {
-            ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
+            // ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
         }
         vTaskDelayUntil(&last, period);
     }

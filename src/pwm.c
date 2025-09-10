@@ -7,6 +7,7 @@
 #include "esp_err.h"
 #include "pid.h"
 #include "server.h"
+#include "log.h"
 
 static const char *TAGPWM = "PWM";
 
@@ -37,7 +38,7 @@ void update_yp_for_pwm(float new_yaw, float new_pitch){
 
 void setMode(const uint8_t mode){
     modeSelector = mode;
-    ESP_LOGI(TAGPWM, "setting mode to %u", modeSelector);
+    // ESP_LOGI(TAGPWM, "setting mode to %u", modeSelector);
 }
 
 static inline uint32_t duty_from_percent(uint32_t pct){
@@ -76,8 +77,8 @@ void setLedcWithOffset(pwmconfig *config){
     ledc_set_duty(LEDC_MODE, CH_D8, config->basePWM + config->offset3);
     ledc_update_duty(LEDC_MODE, CH_D8);
 
-    printf("PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", config->basePWM + config->offset0, config->basePWM + config->offset1, config->basePWM + config->offset2, config->basePWM + config->offset3);
-    ESP_LOGI(TAGPWM, "PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", config->basePWM + config->offset0, config->basePWM + config->offset1, config->basePWM + config->offset2, config->basePWM + config->offset3);
+    // printf("PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", config->basePWM + config->offset0, config->basePWM + config->offset1, config->basePWM + config->offset2, config->basePWM + config->offset3);
+    // ESP_LOGI(TAGPWM, "PWM0: %f | PWM1: %f | PWM2: %f | PWM3: %f\n", config->basePWM + config->offset0, config->basePWM + config->offset1, config->basePWM + config->offset2, config->basePWM + config->offset3);
 }
 
 void setConfigVals(pwmconfig *config, float basePWM, float offset0, float offset1, float offset2, float offset3){
@@ -88,7 +89,9 @@ void setConfigVals(pwmconfig *config, float basePWM, float offset0, float offset
     config->offset3 = offset3;
 }
 
-void pwm_setter_task(){
+void pwm_setter_task(void *arg){
+    (void)arg;
+
     // Configure shared LEDC timer
     ledc_timer_config_t tcfg = {
         .speed_mode       = LEDC_MODE,
@@ -128,6 +131,8 @@ void pwm_setter_task(){
 
     PID_setConstants(&yawAdjustController, 4.0, 1.0, 0.1);
     PID_setConstants(&pitchAdjustController, 4.0, 1.0, 0.1);
+
+    log_add_element("PWM", NULL, 4, 0);
 
     while (1) {
         float yawAdjust = 0.0f;
@@ -223,17 +228,23 @@ void pwm_setter_task(){
 
         setLedcWithOffset(&current_config);
         
+        int pwm_vals[4];
+
+        pwm_vals[0] = (int)(current_config.basePWM + current_config.offset0);
+        pwm_vals[1] = (int)(current_config.basePWM + current_config.offset1);
+        pwm_vals[2] = (int)(current_config.basePWM + current_config.offset2);
+        pwm_vals[3] = (int)(current_config.basePWM + current_config.offset3);
+
         pwm_push_to_server(
-            (int)(current_config.basePWM + current_config.offset0), 
-            (int)(current_config.basePWM + current_config.offset1), 
-            (int)(current_config.basePWM + current_config.offset2), 
-            (int)(current_config.basePWM + current_config.offset3),
+            pwm_vals,
             modeSelector    
         );
 
+        log_update_vals(0, pwm_vals, 4);
+
         // Next step
         next += period;
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(PWM_TASK_FREQ_MS));
 
         currentPWMpct = targetPWMpct;
 

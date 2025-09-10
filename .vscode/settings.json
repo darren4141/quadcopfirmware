@@ -24,6 +24,7 @@
         "ieeefp.h": "c",
         "reent.h": "c",
         "cmath": "c",
-        "pid.h": "c"
+        "pid.h": "c",
+        "queue.h": "c"
     }
 }

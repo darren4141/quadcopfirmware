@@ -36,13 +36,13 @@ void imu_push_ypr_to_server(const float yaw, const float pitch, const float roll
     xSemaphoreGive(ypr_mtx);
 }
 
-void pwm_push_to_server(const int m1, const int m2, const int m3, const int m4, const int mode){
+void pwm_push_to_server(const int *vals, const int mode){
     if (!pwm_mtx) return;
     xSemaphoreTake(pwm_mtx, portMAX_DELAY);
-    pwm_cur[0] = m1; 
-    pwm_cur[1] = m2; 
-    pwm_cur[2] = m3; 
-    pwm_cur[3] = m4;
+    pwm_cur[0] = vals[0]; 
+    pwm_cur[1] = vals[1]; 
+    pwm_cur[2] = vals[2]; 
+    pwm_cur[3] = vals[3];
     pwm_cur[4] = mode;
     xSemaphoreGive(pwm_mtx);
 }
