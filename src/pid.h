@@ -17,6 +17,7 @@ typedef struct{
 
     float eI; //integral term
     float eDeadband; //below a certain value of eP the pid calculation will return 0
+    float integralDeadband; //below a certain value of eP the integral term will reset to 0
 
     float target;
     float errorPrevious;

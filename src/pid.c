@@ -15,6 +15,7 @@ void PID_initialize(pid_controller *controller){
     controller->upperBound = 0;
     controller->maxI = 0;
     controller->eDeadband = 0;
+    controller->integralDeadband = 0;
 }
 
 void PID_setConstants(pid_controller *controller, float new_kP, float new_kI, float new_kD){
@@ -39,6 +40,10 @@ void PID_setEDeadband(pid_controller *controller, float new_eDeadband){
     controller->eDeadband = new_eDeadband;
 }
 
+void PID_setEIDeadband(pid_controller *controller, float new_integralDeadband){
+    controller->integralDeadband = new_integralDeadband;
+}
+
 float PID_calculate(pid_controller *controller, float current){
     float dT = (esp_timer_get_time() - controller->prev_time_us) / 1e6;
     float eP = controller->target - current;
@@ -51,6 +56,8 @@ float PID_calculate(pid_controller *controller, float current){
     float eI = controller->eI + (eP * dT);
     float eD = (eP - controller->errorPrevious) / dT;
 
+    
+    
     //check and obey integral bound
     if((controller->maxI != 0) && fabs(eI) > controller->maxI){
         if(eI > 0){
@@ -58,6 +65,11 @@ float PID_calculate(pid_controller *controller, float current){
         }else{
             eI = -1 * controller->maxI;
         }
+    }
+
+    //check and obey integral deadband
+    if(fabs(eP) < controller->integralDeadband){
+        eI = 0;
     }
 
     //calculate PID
