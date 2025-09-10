@@ -3,7 +3,7 @@ Firmware for a quadcopter, running on an ESP32-C6 using the ESP-IDF framework, f
 Overview of classes:
 
 PID.c:
-Generic PID implementation
+- Generic PID implementation, includes deadband, upper bounds
 
 PWM.c:
 - Includes some stable flight loop control using PID class and a modeSelector
