@@ -282,7 +282,7 @@ void mpu6050_task(void *pvParameters) {
     TickType_t last = xTaskGetTickCount();
     float yaw, pitch, roll;
 
-    log_add_element("YPR", NULL, 3, 1);
+    log_add_element_f("YPR", NULL, 3, 1);
 
     while(1) {
         esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll);
@@ -294,7 +294,7 @@ void mpu6050_task(void *pvParameters) {
             ypr[0] = yaw;
             ypr[1] = pitch;
             ypr[2] = roll;
-            log_update_vals(1, ypr, 3);
+            log_update_vals_f(1, ypr, 3);
         } else {
             // ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
         }
