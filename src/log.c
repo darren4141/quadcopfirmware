@@ -10,12 +10,6 @@ volatile int log_size = 0;
 
 static const char *TAGLOG = "LOG";
 
-static char log_name[MAX_NUM_ELEMENTS][NAME_LENGTH];
-static float log_val_f[MAX_NUM_ELEMENTS][MAX_NUM_VALS];
-static int log_val_i[MAX_NUM_ELEMENTS][MAX_NUM_VALS];
-static size_t log_num_vals[MAX_NUM_ELEMENTS];
-static uint8_t log_type[MAX_NUM_ELEMENTS]; //0 float, 1 int
-
 static log_output_stream logs[MAX_NUM_ELEMENTS];
 
 static SemaphoreHandle_t log_mutex;
@@ -129,7 +123,7 @@ void log_output_task(void *arg){
 
             offset += name_write_size;
 
-            for(size_t j = 0; j < log_num_vals[i]; j++){
+            for(size_t j = 0; j < logs[i].num_vals; j++){
                 int data_write_size = 0;
 
                 if(logs[i].floating_point_presc == 0){
