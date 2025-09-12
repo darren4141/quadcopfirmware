@@ -10,13 +10,13 @@
 extern volatile int size;
 
 typedef struct{
-
-
-}log_output;
+    char name[NAME_LENGTH];
+    int val[MAX_NUM_VALS];
+    size_t num_vals;
+    uint8_t floating_point_presc;
+}log_output_stream;
 
 esp_err_t log_init();
-void log_add_element_f(char *name, float *vals, size_t num_vals, int index);
-void log_update_vals_f(uint8_t index, float *vals, size_t num_vals);
-void log_add_element_i(char *name, int *vals, size_t num_vals, int index);
-void log_update_vals_i(uint8_t index, int *vals, size_t num_vals);
+void log_add_element(char *name, float *vals, size_t num_vals, int index, uint8_t floating_point_presc);
+void log_update_vals(uint8_t index, float *vals, size_t num_vals);
 void log_output_task(void *arg);
