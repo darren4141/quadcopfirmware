@@ -14,7 +14,7 @@ static log_output_stream logs[MAX_NUM_ELEMENTS];
 
 static SemaphoreHandle_t log_mutex;
 
-int pow10(int n){
+int pow10i(int n){
     if(n == 0){
         return 1;
     }
@@ -35,6 +35,8 @@ esp_err_t log_init(){
             logs[i].val[j] = 0;
         }
     }
+    // log_mutex = xSemaphoreCreateMutex();
+
     return ESP_OK;
 }
 
@@ -50,12 +52,12 @@ static void inline log_unlock(){
     }
 }
 
-void log_add_element(char *name, float *vals, size_t num_vals, int index, uint8_t floating_point_presc){
-    if(index < 0 || index > MAX_NUM_ELEMENTS){
+void log_add_element(char *name, size_t num_vals, int index, uint8_t floating_point_presc){
+    if(index < 0 || index >= MAX_NUM_ELEMENTS){
         return;
     }
-    if(num_vals > MAX_NUM_ELEMENTS){
-        num_vals = MAX_NUM_ELEMENTS;
+    if(num_vals > MAX_NUM_VALS){
+        num_vals = MAX_NUM_VALS;
     }
 
     log_lock();
@@ -66,16 +68,11 @@ void log_add_element(char *name, float *vals, size_t num_vals, int index, uint8_
     logs[index].floating_point_presc = floating_point_presc;
     logs[index].num_vals = num_vals;
     
-    for(int i = 0; i < num_vals; i++){
-        logs[index].val[i] = (int)(vals[i] * pow10(floating_point_presc));
-    }
-    
     log_unlock();
     
-    log_size++;
 }
 
-void log_update_vals(uint8_t index, float *vals, size_t num_vals){
+void log_update_vals(uint8_t index, int *vals, size_t num_vals){
     if(index > MAX_NUM_ELEMENTS){
         return;
     }
@@ -87,8 +84,10 @@ void log_update_vals(uint8_t index, float *vals, size_t num_vals){
     
     logs[index].num_vals = num_vals;
     
-    for(int i = 0; i < num_vals; i++){
-        logs[index].val[i] = (int)(vals[i] * pow10(logs[index].floating_point_presc));
+    if(vals != NULL){
+        for(int i = 0; i < num_vals; i++){
+            logs[index].val[i] = vals[i];
+        }
     }
     
     log_unlock();
@@ -102,7 +101,7 @@ void log_output_task(void *arg){
     line[0] = '\0';
 
     while(1){
-        log_lock();
+        // log_lock();
         
         int offset = 0;
         for(int i = 0; i < MAX_NUM_ELEMENTS; i++){
@@ -129,7 +128,7 @@ void log_output_task(void *arg){
                 if(logs[i].floating_point_presc == 0){
                     data_write_size = snprintf(line + offset, sizeof(line) - offset, "| %d", logs[i].val[j]);
                 }else{
-                    data_write_size = snprintf(line + offset, sizeof(line) - offset, "| %d.%d", logs[i].val[j] / pow10(logs[i].floating_point_presc), logs[i].val[j] % pow10(logs[i].floating_point_presc));
+                    data_write_size = snprintf(line + offset, sizeof(line) - offset, "| %d.%d", logs[i].val[j] / pow10i(logs[i].floating_point_presc), abs(logs[i].val[j] % pow10i(logs[i].floating_point_presc)));
                 }
                 
                 if(data_write_size < 0 || data_write_size >= (int)sizeof(line) - offset){
@@ -142,7 +141,7 @@ void log_output_task(void *arg){
 
         }
 
-        log_unlock();
+        // log_unlock();
 
         if(offset == 0){
             ESP_LOGI(TAGLOG, "nothing to log");

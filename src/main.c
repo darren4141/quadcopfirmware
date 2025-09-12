@@ -18,8 +18,10 @@
 #define D3_PIN 21
 #define D8_PIN 19
 mpu6050_t imu;
+static const char *TAGMAIN = "MAIN";
 
 void app_main(void) {
+    ESP_LOGI(TAGMAIN, "Hello world");
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(imu_boot(&imu));
     ESP_ERROR_CHECK(server_init());

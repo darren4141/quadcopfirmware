@@ -132,7 +132,7 @@ void pwm_setter_task(void *arg){
     PID_setConstants(&yawAdjustController, 4.0, 1.0, 0.1);
     PID_setConstants(&pitchAdjustController, 4.0, 1.0, 0.1);
 
-    log_add_element_i("PWM", NULL, 4, 0);
+    log_add_element("PWM", 4, 0, 0);
 
     while (1) {
         float yawAdjust = 0.0f;
@@ -240,7 +240,7 @@ void pwm_setter_task(void *arg){
             modeSelector    
         );
 
-        log_update_vals_i(0, pwm_vals, 4);
+        log_update_vals(0, pwm_vals, 4);
 
         // Next step
         next += period;
