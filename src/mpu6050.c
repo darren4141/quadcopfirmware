@@ -164,7 +164,6 @@ esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples) {
     return ESP_OK;
 }
 
-// --- Mahony IMU (no magnetometer) ---
 static void mahony_update_imu(mpu6050_t *d,
                               float gx_dps, float gy_dps, float gz_dps,
                               float ax_g,  float ay_g,  float az_g,
@@ -178,18 +177,25 @@ static void mahony_update_imu(mpu6050_t *d,
     // Normalize accelerometer
     float norm = sqrtf(ax_g*ax_g + ay_g*ay_g + az_g*az_g);
     if (norm > 1e-6f) {
-        ax_g /= norm; ay_g /= norm; az_g /= norm;
+        ax_g /= norm; 
+        ay_g /= norm; 
+        az_g /= norm;
+
+        int accuracy[1] = {(int)((sqrtf(ax_g*ax_g + ay_g*ay_g + az_g*az_g) - 1) * 100)};    
+
+        log_update_vals(3, accuracy, 2);
 
         // Estimated gravity from quaternion
         float q0 = d->q0, q1 = d->q1, q2 = d->q2, q3 = d->q3;
-        float vx = 2.0f*(q1*q3 - q0*q2);
-        float vy = 2.0f*(q0*q1 + q2*q3);
-        float vz = q0*q0 - q1*q1 - q2*q2 + q3*q3;
+
+        float ax = 2.0f*(q1*q3 - q0*q2);
+        float ay = 2.0f*(q0*q1 + q2*q3);
+        float az = q0*q0 - q1*q1 - q2*q2 + q3*q3;
 
         // Error is cross product between measured and estimated gravity
-        float ex = (ay_g * vz - az_g * vy);
-        float ey = (az_g * vx - ax_g * vz);
-        float ez = (ax_g * vy - ay_g * vx);
+        float ex = (ay_g * az - az_g * ay);
+        float ey = (az_g * ax - ax_g * az);
+        float ez = (ax_g * ay - ay_g * ax);
 
         // Integral + proportional feedback
         if (d->ki > 0.0f) {
@@ -202,7 +208,7 @@ static void mahony_update_imu(mpu6050_t *d,
         gz += d->kp * ez + d->ezInt;
     }
 
-    // Integrate quaternion rate: qDot = 0.5 * q ⊗ [0, gx, gy, gz]
+    // Integrate quaternion rate: qDot = 0.5 * q X [0, gx, gy, gz]
     float q0 = d->q0, q1 = d->q1, q2 = d->q2, q3 = d->q3;
     float halfdt = 0.5f * dt;
 
@@ -213,7 +219,10 @@ static void mahony_update_imu(mpu6050_t *d,
 
     // Normalize quaternion
     float qnorm = 1.0f / sqrtf(d->q0*d->q0 + d->q1*d->q1 + d->q2*d->q2 + d->q3*d->q3);
-    d->q0 *= qnorm; d->q1 *= qnorm; d->q2 *= qnorm; d->q3 *= qnorm;
+    d->q0 *= qnorm; 
+    d->q1 *= qnorm; 
+    d->q2 *= qnorm; 
+    d->q3 *= qnorm;
 }
 
 void mpu6050_quat_to_ypr(float q0, float q1, float q2, float q3,
@@ -233,7 +242,23 @@ void mpu6050_quat_to_ypr(float q0, float q1, float q2, float q3,
     if (roll_deg)  *roll_deg  = roll  * RAD2DEG;
 }
 
-esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg) {
+void accel_to_pitch_roll(float ax, float ay, float az,
+                         float *pitch_deg, float *roll_deg)
+{
+    // Normalize to 1 g (optional but helps if scaling is off)
+    float norm = sqrtf(ax*ax + ay*ay + az*az);
+    if (norm < 1e-6f) {
+        if (pitch_deg) *pitch_deg = 0.0f;
+        if (roll_deg)  *roll_deg  = 0.0f;
+        return;
+    }
+    ax /= norm; ay /= norm; az /= norm;
+
+    if (pitch_deg) *pitch_deg = atan2f(-ax, sqrtf(ay*ay + az*az)) * 180.0f / (float)M_PI;
+    if (roll_deg)  *roll_deg  = atan2f( ay, az ) * 180.0f / (float)M_PI;
+}
+
+esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg, float *pitch_deg_raw, float *roll_deg_raw) {
     if (!dev) return ESP_ERR_INVALID_ARG;
 
     int16_t axr, ayr, azr, gxr, gyr, gzr;
@@ -256,7 +281,9 @@ esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, f
     dev->last_update_us = now;
 
     mahony_update_imu(dev, gx, gy, gz, ax, ay, az, dt);
+    accel_to_pitch_roll(ax, ay, az, pitch_deg_raw, roll_deg_raw);
     mpu6050_quat_to_ypr(dev->q0, dev->q1, dev->q2, dev->q3, yaw_deg, pitch_deg, roll_deg);
+
     return ESP_OK;
 }
 
@@ -276,21 +303,25 @@ void mpu6050_task(void *pvParameters) {
 
     mpu6050_t *imu = (mpu6050_t *)pvParameters;
 
-    float yaw, pitch, roll;
+    float yaw, pitch, roll, pitch_raw, roll_raw;
 
-    log_add_element("YPR", 3, 1, 1);
+    log_add_element("PR", 2, 1, 1);
+    log_add_element("SPR", 2, 2, 1);
+    log_add_element("AC", 1, 3, 3);
+
 
     while(1) {
-        esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll);
+        esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll, &pitch_raw, &roll_raw);
         if (err == ESP_OK) {
             // ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
             imu_push_ypr_to_server(yaw, pitch, roll);
             update_yp_for_pwm(yaw, pitch);
-            int ypr[3];
-            ypr[0] = (int)(yaw * 10);
-            ypr[1] = (int)(pitch * 10);
-            ypr[2] = (int)(roll * 10);
-            log_update_vals(1, ypr, 3);
+            int pr[2];
+            pr[0] = (int)(pitch * 30);
+            pr[1] = (int)(roll * 30);
+            int spr[2] = {(int)(pitch_raw * 30), (int)(roll_raw * 30)};
+            log_update_vals(1, pr, 2);
+            log_update_vals(2, spr, 2);
         } else {
             // ESP_LOGW(TAGMPU, "update_ypr failed: %s", esp_err_to_name(err));
         }
@@ -304,9 +335,9 @@ esp_err_t imu_boot(mpu6050_t *imu){
     
     uint8_t who = 0;
     ESP_RETURN_ON_ERROR(mpu6050_whoami(imu, &who), TAGMPU, "whoami");
-    ESP_LOGI(TAGMPU, "WHO_AM_I = 0x%02X (expect 0x68)", who);
+    ESP_LOGI(TAGMPU, "WHO_AM_I = 0x%02X (expect 0x69)", who);
 
-    imu->kp = 3.0f;   // 2.0–5.0 good for snappy response
+    imu->kp = 5.0f;   // 2.0–5.0 good for snappy response
     imu->ki = 0.02f;  // small integral helps gyro bias; set 0.0f if you see drift overshoot
     
     ESP_RETURN_ON_ERROR(mpu6050_calibrate(imu, 500), TAGMPU, "calibrate");

@@ -83,7 +83,7 @@ esp_err_t mpu6050_read_raw(mpu6050_t *dev,
 
 // Update internal filter and return yaw/pitch/roll in degrees.
 // Uses internal dt from esp_timer; call at a fixed-ish rate (100–500 Hz).
-esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg);
+esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg, float *pitch_deg_raw, float *roll_deg_raw);
 
 // Reset filter orientation to identity (yaw=0, pitch=0, roll=0)
 void mpu6050_reset_filter(mpu6050_t *dev);
