@@ -12,6 +12,7 @@
 #include "mpu6050.h"
 #include "server.h"
 #include "log.h"
+#include "mpu6050_dmp.h"
 
 #define D0_PIN 0
 #define D2_PIN 2

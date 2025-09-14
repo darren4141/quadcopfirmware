@@ -313,7 +313,6 @@ void mpu6050_task(void *pvParameters) {
 
     log_add_element("PR", 2, 1, 1);
     log_add_element("SPR", 2, 2, 1);
-    log_add_element("AC", 1, 3, 3);
 
 
     while(1) {

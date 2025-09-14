@@ -25,6 +25,7 @@
         "reent.h": "c",
         "cmath": "c",
         "pid.h": "c",
-        "queue.h": "c"
+        "queue.h": "c",
+        "mpu6050_dmp.h": "c"
     }
 }
