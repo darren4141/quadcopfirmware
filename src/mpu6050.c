@@ -284,6 +284,12 @@ esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, f
     accel_to_pitch_roll(ax, ay, az, pitch_deg_raw, roll_deg_raw);
     mpu6050_quat_to_ypr(dev->q0, dev->q1, dev->q2, dev->q3, yaw_deg, pitch_deg, roll_deg);
 
+    *yaw_deg *= 3;
+    *pitch_deg *= 3;
+    *roll_deg *= 3;
+    *pitch_deg_raw *= 3;
+    *roll_deg_raw *= 3;
+
     return ESP_OK;
 }
 
@@ -317,9 +323,9 @@ void mpu6050_task(void *pvParameters) {
             imu_push_ypr_to_server(yaw, pitch, roll);
             update_yp_for_pwm(yaw, pitch);
             int pr[2];
-            pr[0] = (int)(pitch * 30);
-            pr[1] = (int)(roll * 30);
-            int spr[2] = {(int)(pitch_raw * 30), (int)(roll_raw * 30)};
+            pr[0] = (int)(pitch * 10);
+            pr[1] = (int)(roll * 10);
+            int spr[2] = {(int)(pitch_raw * 10), (int)(roll_raw * 10)};
             log_update_vals(1, pr, 2);
             log_update_vals(2, spr, 2);
         } else {
