@@ -129,8 +129,8 @@ void pwm_setter_task(void *arg){
     PID_setUpperBound(&yawAdjustController, PID_UPPER_BOUND);
     PID_setUpperBound(&pitchAdjustController, PID_UPPER_BOUND);
 
-    PID_setConstants(&yawAdjustController, 1, 0, 0);
-    PID_setConstants(&pitchAdjustController, 1, 0, 0);
+    PID_setConstants(&yawAdjustController, 0.5, 0, 0);
+    PID_setConstants(&pitchAdjustController, 0.5, 0, 0);
 
     log_add_element("PWM", 4, 0, 0);
 
