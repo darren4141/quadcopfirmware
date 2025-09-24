@@ -29,7 +29,7 @@ volatile float currentPitch = 0;
  * 8 -> L       PITCH BWD
  * 9 -> STOP    DEAD STICK
  */
-volatile uint8_t modeSelector = 0;
+volatile uint8_t modeSelector = 9;
 
 void update_yp_for_pwm(float new_yaw, float new_pitch){
     currentYaw = new_yaw;
@@ -65,11 +65,11 @@ float getTargetPWMpct(){
 }
 
 void setLedcWithOffset(pwmconfig *config){
-    ledc_set_duty(LEDC_MODE, CH_D0, config->basePWM + config->offset0);
-    ledc_update_duty(LEDC_MODE, CH_D0);
-    
-    ledc_set_duty(LEDC_MODE, CH_D2, config->basePWM + config->offset1);
+    ledc_set_duty(LEDC_MODE, CH_D2, config->basePWM + config->offset0);
     ledc_update_duty(LEDC_MODE, CH_D2);
+    
+    ledc_set_duty(LEDC_MODE, CH_D0, config->basePWM + config->offset1);
+    ledc_update_duty(LEDC_MODE, CH_D0);
     
     ledc_set_duty(LEDC_MODE, CH_D3, config->basePWM + config->offset2);
     ledc_update_duty(LEDC_MODE, CH_D3);
@@ -129,8 +129,8 @@ void pwm_setter_task(void *arg){
     PID_setUpperBound(&yawAdjustController, PID_UPPER_BOUND);
     PID_setUpperBound(&pitchAdjustController, PID_UPPER_BOUND);
 
-    PID_setConstants(&yawAdjustController, 4.0, 1.0, 0.1);
-    PID_setConstants(&pitchAdjustController, 4.0, 1.0, 0.1);
+    PID_setConstants(&yawAdjustController, 1, 0, 0);
+    PID_setConstants(&pitchAdjustController, 1, 0, 0);
 
     log_add_element("PWM", 4, 0, 0);
 

@@ -74,7 +74,7 @@ esp_err_t mpu6050_whoami(mpu6050_t *dev, uint8_t *out);
 
 // Calibrate biases (keep device still on a flat surface).
 // samples: e.g. 500. Takes ~samples/200 seconds at 200 Hz.
-esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples);
+esp_err_t mpu6050_calibrate(int samples);
 
 // Read raw sensor values
 esp_err_t mpu6050_read_raw(mpu6050_t *dev,
@@ -83,10 +83,10 @@ esp_err_t mpu6050_read_raw(mpu6050_t *dev,
 
 // Update internal filter and return yaw/pitch/roll in degrees.
 // Uses internal dt from esp_timer; call at a fixed-ish rate (100–500 Hz).
-esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg, float *pitch_deg_raw, float *roll_deg_raw);
+esp_err_t mpu6050_update_ypr(float *yaw_deg, float *pitch_deg, float *roll_deg, float *pitch_deg_raw, float *roll_deg_raw);
 
 // Reset filter orientation to identity (yaw=0, pitch=0, roll=0)
-void mpu6050_reset_filter(mpu6050_t *dev);
+void mpu6050_reset_filter();
 
 // Helper: convert quaternion -> yaw/pitch/roll (deg)
 void mpu6050_quat_to_ypr(float q0, float q1, float q2, float q3,

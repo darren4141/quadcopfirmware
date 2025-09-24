@@ -14,6 +14,7 @@
 #include "packet.h"
 #include "pwm.h"
 #include "server_html.h"
+#include "mpu6050.h"
 
 // ----------- YPR ring buffer + offsets -----------
 static float ring[RING_N][3];    // [i][0]=yaw, [1]=pitch, [2]=roll
@@ -198,7 +199,7 @@ esp_err_t ws_handler(httpd_req_t *req) {
 
         if((pkt.wasd & 0x00) && (pkt.ijkl & 0x00)){
             ESP_LOGI(TAG, "wasd and ijkl empty, hovering");
-            setMode(0);
+            // setMode(0);
         }
 
         if(pkt.wasd & 0x01){ //W pressed
@@ -243,10 +244,12 @@ esp_err_t ws_handler(httpd_req_t *req) {
         
         if(pkt.tfgh & 0x01){ //T pressed - Zeroing function
             ESP_LOGI(TAG, "T pressed");
+            mpu6050_calibrate(500);
         }
         
         if(pkt.tfgh & 0x02){ //F pressed
             ESP_LOGI(TAG, "F pressed");
+            setMode(9);
         }
         
         if(pkt.tfgh & 0x04){ //G pressed

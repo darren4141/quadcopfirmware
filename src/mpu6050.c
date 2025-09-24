@@ -12,6 +12,8 @@
 
 static const char *TAGMPU = "MPU6050";
 
+static mpu6050_t *imu_global;
+
 // --- Low-level I2C helpers ---
 static inline esp_err_t i2c_write_reg(i2c_port_t port, uint8_t addr, uint8_t reg, uint8_t val) {
     uint8_t buf[2] = { reg, val };
@@ -123,8 +125,8 @@ esp_err_t mpu6050_read_raw(mpu6050_t *dev,
     return ESP_OK;
 }
 
-esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples) {
-    if (!dev || samples <= 0) return ESP_ERR_INVALID_ARG;
+esp_err_t mpu6050_calibrate(int samples) {
+    if (!imu_global || samples <= 0) return ESP_ERR_INVALID_ARG;
     ESP_LOGI(TAGMPU, "Calibrating... keep the sensor still (%d samples)", samples);
 
     double ax_sum=0, ay_sum=0, az_sum=0;
@@ -132,7 +134,7 @@ esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples) {
 
     for (int i = 0; i < samples; i++) {
         int16_t ax, ay, az, gx, gy, gz;
-        esp_err_t err = mpu6050_read_raw(dev, &ax, &ay, &az, &gx, &gy, &gz);
+        esp_err_t err = mpu6050_read_raw(imu_global, &ax, &ay, &az, &gx, &gy, &gz);
         if (err != ESP_OK) return err;
 
         ax_sum += (double)ax; ay_sum += (double)ay; az_sum += (double)az;
@@ -149,18 +151,17 @@ esp_err_t mpu6050_calibrate(mpu6050_t *dev, int samples) {
     double gz_avg = gz_sum / samples;
 
     // Convert to g and dps, store biases. Assume Z sees +1g at rest.
-    dev->ax_bias = (float)(ax_avg / dev->accel_lsb_per_g);
-    dev->ay_bias = (float)(ay_avg / dev->accel_lsb_per_g);
-    dev->az_bias = (float)(az_avg / dev->accel_lsb_per_g - 1.0); // subtract gravity
-
-    dev->gx_bias = (float)(gx_avg / dev->gyro_lsb_per_dps);
-    dev->gy_bias = (float)(gy_avg / dev->gyro_lsb_per_dps);
-    dev->gz_bias = (float)(gz_avg / dev->gyro_lsb_per_dps);
+    imu_global->ax_bias = (float)(ax_avg / imu_global->accel_lsb_per_g);
+    imu_global->ay_bias = (float)(ay_avg / imu_global->accel_lsb_per_g);
+    imu_global->az_bias = (float)(az_avg / imu_global->accel_lsb_per_g - 1.0); // subtract gravity
+    imu_global->gx_bias = (float)(gx_avg / imu_global->gyro_lsb_per_dps);
+    imu_global->gy_bias = (float)(gy_avg / imu_global->gyro_lsb_per_dps);
+    imu_global->gz_bias = (float)(gz_avg / imu_global->gyro_lsb_per_dps);
 
     ESP_LOGI(TAGMPU, "Accel bias (g): ax=%.4f ay=%.4f az=%.4f (g includes gravity offset removed on Z)",
-             dev->ax_bias, dev->ay_bias, dev->az_bias);
+             imu_global->ax_bias, imu_global->ay_bias, imu_global->az_bias);
     ESP_LOGI(TAGMPU, "Gyro  bias (dps): gx=%.3f gy=%.3f gz=%.3f",
-             dev->gx_bias, dev->gy_bias, dev->gz_bias);
+             imu_global->gx_bias, imu_global->gy_bias, imu_global->gz_bias);
     return ESP_OK;
 }
 
@@ -258,31 +259,30 @@ void accel_to_pitch_roll(float ax, float ay, float az,
     if (roll_deg)  *roll_deg  = atan2f( ay, az ) * 180.0f / (float)M_PI;
 }
 
-esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, float *roll_deg, float *pitch_deg_raw, float *roll_deg_raw) {
-    if (!dev) return ESP_ERR_INVALID_ARG;
+esp_err_t mpu6050_update_ypr(float *yaw_deg, float *pitch_deg, float *roll_deg, float *pitch_deg_raw, float *roll_deg_raw) {
 
     int16_t axr, ayr, azr, gxr, gyr, gzr;
-    esp_err_t err = mpu6050_read_raw(dev, &axr, &ayr, &azr, &gxr, &gyr, &gzr);
+    esp_err_t err = mpu6050_read_raw(imu_global, &axr, &ayr, &azr, &gxr, &gyr, &gzr);
     if (err != ESP_OK) return err;
 
     // Convert to g and dps, apply biases
-    float ax = (axr / dev->accel_lsb_per_g) - dev->ax_bias;
-    float ay = (ayr / dev->accel_lsb_per_g) - dev->ay_bias;
-    float az = (azr / dev->accel_lsb_per_g) - dev->az_bias;
+    float ax = (axr / imu_global->accel_lsb_per_g) - imu_global->ax_bias;
+    float ay = (ayr / imu_global->accel_lsb_per_g) - imu_global->ay_bias;
+    float az = (azr / imu_global->accel_lsb_per_g) - imu_global->az_bias;
 
-    float gx = (gxr / dev->gyro_lsb_per_dps) - dev->gx_bias;
-    float gy = (gyr / dev->gyro_lsb_per_dps) - dev->gy_bias;
-    float gz = (gzr / dev->gyro_lsb_per_dps) - dev->gz_bias;
+    float gx = (gxr / imu_global->gyro_lsb_per_dps) - imu_global->gx_bias;
+    float gy = (gyr / imu_global->gyro_lsb_per_dps) - imu_global->gy_bias;
+    float gz = (gzr / imu_global->gyro_lsb_per_dps) - imu_global->gz_bias;
 
     // dt from esp_timer
     uint64_t now = esp_timer_get_time();
-    float dt = (dev->last_update_us == 0) ? 0.005f : (now - dev->last_update_us) / 1e6f; // seconds
+    float dt = (imu_global->last_update_us == 0) ? 0.005f : (now - imu_global->last_update_us) / 1e6f; // seconds
     if (dt < 1e-6f || dt > 0.1f) dt = 0.005f; // clamp to reasonable
-    dev->last_update_us = now;
+    imu_global->last_update_us = now;
 
-    mahony_update_imu(dev, gx, gy, gz, ax, ay, az, dt);
+    mahony_update_imu(imu_global, gx, gy, gz, ax, ay, az, dt);
     accel_to_pitch_roll(ax, ay, az, pitch_deg_raw, roll_deg_raw);
-    mpu6050_quat_to_ypr(dev->q0, dev->q1, dev->q2, dev->q3, yaw_deg, pitch_deg, roll_deg);
+    mpu6050_quat_to_ypr(imu_global->q0, imu_global->q1, imu_global->q2, imu_global->q3, yaw_deg, pitch_deg, roll_deg);
 
     *yaw_deg *= 3;
     *pitch_deg *= 3;
@@ -293,21 +293,13 @@ esp_err_t mpu6050_update_ypr(mpu6050_t *dev, float *yaw_deg, float *pitch_deg, f
     return ESP_OK;
 }
 
-void mpu6050_reset_filter(mpu6050_t *dev) {
-    if (!dev) return;
-    dev->q0 = 1.0f; dev->q1 = dev->q2 = dev->q3 = 0.0f;
-    dev->exInt = dev->eyInt = dev->ezInt = 0.0f;
-    dev->last_update_us = esp_timer_get_time();
+void mpu6050_reset_filter() {
+    imu_global->q0 = 1.0f; imu_global->q1 = imu_global->q2 = imu_global->q3 = 0.0f;
+    imu_global->exInt = imu_global->eyInt = imu_global->ezInt = 0.0f;
+    imu_global->last_update_us = esp_timer_get_time();
 }
 
 void mpu6050_task(void *pvParameters) {
-    if (pvParameters == NULL) {
-        ESP_LOGE(TAGMPU, "mpu6050_task: NULL pvParameters");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    mpu6050_t *imu = (mpu6050_t *)pvParameters;
 
     float yaw, pitch, roll, pitch_raw, roll_raw;
 
@@ -316,7 +308,7 @@ void mpu6050_task(void *pvParameters) {
 
 
     while(1) {
-        esp_err_t err = mpu6050_update_ypr(imu, &yaw, &pitch, &roll, &pitch_raw, &roll_raw);
+        esp_err_t err = mpu6050_update_ypr(&yaw, &pitch, &roll, &pitch_raw, &roll_raw);
         if (err == ESP_OK) {
             // ESP_LOGI("YPR", "yaw=%7.2f°, pitch=%7.2f°, roll=%7.2f°", yaw, pitch, roll);
             imu_push_ypr_to_server(yaw, pitch, roll);
@@ -335,17 +327,20 @@ void mpu6050_task(void *pvParameters) {
 }
 
 esp_err_t imu_boot(mpu6050_t *imu){
+
+    imu_global = imu;
+
     ESP_RETURN_ON_ERROR(mpu6050_i2c_init(MPU6050_I2C_PORT, I2C_SDA, I2C_SCL, MPU6050_I2C_FREQ_HZ), TAGMPU, "MPU i2c init");
-    ESP_RETURN_ON_ERROR(mpu6050_init(imu, MPU6050_I2C_PORT, MPU6050_ADDR_DEFAULT), TAGMPU, "MPU init");
+    ESP_RETURN_ON_ERROR(mpu6050_init(imu_global, MPU6050_I2C_PORT, MPU6050_ADDR_DEFAULT), TAGMPU, "MPU init");
     
     uint8_t who = 0;
-    ESP_RETURN_ON_ERROR(mpu6050_whoami(imu, &who), TAGMPU, "whoami");
+    ESP_RETURN_ON_ERROR(mpu6050_whoami(imu_global, &who), TAGMPU, "whoami");
     ESP_LOGI(TAGMPU, "WHO_AM_I = 0x%02X (expect 0x69)", who);
 
-    imu->kp = 5.0f;   // 2.0–5.0 good for snappy response
-    imu->ki = 0.02f;  // small integral helps gyro bias; set 0.0f if you see drift overshoot
+    imu_global->kp = 5.0f;   // 2.0–5.0 good for snappy response
+    imu_global->ki = 0.02f;  // small integral helps gyro bias; set 0.0f if you see drift overshoot
     
-    ESP_RETURN_ON_ERROR(mpu6050_calibrate(imu, 500), TAGMPU, "calibrate");
+    ESP_RETURN_ON_ERROR(mpu6050_calibrate(500), TAGMPU, "calibrate");
 
     return ESP_OK;
 }

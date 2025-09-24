@@ -32,7 +32,7 @@ void app_main(void) {
     TaskHandle_t pwm_setter_task_handle = NULL;
     TaskHandle_t log_output_task_handle = NULL;
 
-    xTaskCreate(mpu6050_task, "mpu6050_task", 3072, (void *)&imu, 5, &mpu6050_task_handle);
+    xTaskCreate(mpu6050_task, "mpu6050_task", 3072, NULL, 5, &mpu6050_task_handle);
     xTaskCreate(pwm_setter_task, "pwm_setter_task", 4096, NULL, 4, &pwm_setter_task_handle);
     xTaskCreate(log_output_task, "log_output_task", 4096, NULL, 3, &log_output_task_handle);
     

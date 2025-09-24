@@ -16,7 +16,7 @@
 #define CH_D8 LEDC_CHANNEL_3
 
 //PID PWM CONSTANTS
-#define HOVER_FF 700
+#define HOVER_FF 800
 #define ASCEND_PWM 100
 #define DESCEND_PWM -100
 #define ROLL_PWM 25
@@ -34,7 +34,6 @@ typedef struct{
     float offset1;
     float offset2;
     float offset3;
-
 }pwmconfig;
 
 void setMode(const uint8_t mode);
